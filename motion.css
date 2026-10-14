@@ -1,0 +1,66 @@
+/* Shared motion layer — see motion.js */
+.bm{--bm-accent:#c2400f;--bm-ink:#171714;--bm-ease:cubic-bezier(.16,1,.3,1)}
+.bm-dark{--bm-accent:#ff9d58;--bm-ink:#f4f1ec}
+
+/* Cursor (fine pointers only) */
+.bm-cursor{position:fixed;inset:0;pointer-events:none;z-index:2147483000;opacity:0;transition:opacity .3s}
+.bm-cursor.visible{opacity:1}
+.bm-cursor i{position:fixed;left:0;top:0;display:grid;place-items:center}
+.bm-cursor .dot{width:6px;height:6px;border-radius:50%;background:var(--bm-accent);transition:scale .25s var(--bm-ease)}
+.bm-cursor .ring{width:34px;height:34px;border:1px solid color-mix(in srgb,var(--bm-ink) 45%,transparent);transition:border-color .3s,background .3s,opacity .3s;backdrop-filter:none}
+.bm-cursor .ring b{font:500 9.5px/1 'IBM Plex Mono','Geist Mono',monospace;letter-spacing:.14em;color:#fff;opacity:0;transition:opacity .25s;white-space:nowrap}
+.bm-cursor.on-control .ring{border-color:var(--bm-accent)}
+.bm-cursor.on-control .dot{scale:.5}
+.bm-cursor.has-label .ring{background:var(--bm-accent);border-color:transparent;mix-blend-mode:normal}
+.bm-cursor.has-label .ring b{opacity:1}.bm-cursor.has-label .dot{scale:0}
+.bm-dark .bm-cursor.has-label .ring b{color:#0a0807}
+.bm-cursor.on-text .ring{opacity:0}.bm-cursor.on-text .dot{scale:.6 3;border-radius:1px}
+.bm-cursor.down .ring{scale:.82}.bm-cursor .ring{transition:border-color .3s,background .3s,opacity .3s,scale .3s var(--bm-ease)}
+@media (pointer:fine){.bm body,.bm a,.bm button,.bm [role=button],.bm .p-hero{cursor:none}.bm input,.bm textarea{cursor:text}}
+@media (pointer:coarse){.bm-cursor{display:none}}
+.bm .interaction-halo{display:none!important}
+
+/* Press feedback — the visual half of haptics */
+.bm-press{scale:.965;transition:scale .12s ease!important}
+a,button,[role=button]{transition-property:scale,translate,color,background,border-color,box-shadow,opacity,transform;-webkit-tap-highlight-color:transparent}
+.bm-ios-haptic{position:fixed;left:-100px;top:0;opacity:0;pointer-events:none}
+
+/* Click sparks */
+.bm-fx{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2147482999}
+
+/* Scroll progress */
+.bm-progress{position:fixed;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,#ff4200,#ff9d58);transform-origin:0 50%;transform:scaleX(0);z-index:2147482998;pointer-events:none;box-shadow:0 0 12px rgba(255,90,20,.6)}
+
+/* Transition curtain */
+.bm-curtain{position:fixed;inset:0;z-index:2147483001;background:#0a0807;color:#ff9d58;display:grid;place-items:center;pointer-events:none;clip-path:inset(100% 0 0 0);transition:clip-path .55s var(--bm-ease)}
+.bm-curtain.show{clip-path:inset(0 0 0 0);pointer-events:all}
+.bm-curtain.instant{transition:none}
+.bm-curtain pre{position:absolute;inset:0;margin:0;font:13px/16px 'IBM Plex Mono','Geist Mono',monospace;color:#5a3a26;overflow:hidden;white-space:pre}
+.bm-curtain span{position:relative;font:500 12px 'IBM Plex Mono','Geist Mono',monospace;letter-spacing:.24em;padding:12px 18px;background:#0a0807;border:1px solid #3a2a22;color:#ffd2ae}
+
+/* ASCII lens */
+.bm-ascii{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;border-radius:inherit}
+
+/* Particles dock (mirrors the experience dock) */
+.bm-dock{position:fixed;left:50%;bottom:22px;translate:-50% 0;z-index:60;display:flex;align-items:center;gap:4px;padding:6px;border-radius:999px;background:rgba(22,17,15,.78);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(16px);font:500 11px 'IBM Plex Mono',monospace;letter-spacing:.1em;color:#d9d4ce;box-shadow:0 20px 50px -20px #000}
+.bm-dock a,.bm-dock button{width:34px;height:34px;display:grid;place-items:center;border-radius:50%;background:none;border:0;color:inherit;transition:background .3s,color .3s}
+.bm-dock a:hover,.bm-dock button:hover{background:#ff9d58;color:#0a0807}
+.bm-dock span{padding:0 14px;white-space:nowrap}
+
+/* Hub / portfolio rise */
+.bm-rise{opacity:0;translate:0 36px;transition:opacity 1s var(--bm-ease),translate 1s var(--bm-ease);transition-delay:var(--d,0ms)}
+.bm-rise.in{opacity:1;translate:0 0}
+
+@media (prefers-reduced-motion:reduce){.bm-rise{opacity:1;translate:none}.bm-curtain{display:none}.bm-fx{display:none}}
+
+/* Glitch */
+.bm-glitch{animation:bmGlitch .5s steps(1) 1;position:relative}
+@keyframes bmGlitch{
+ 0%{text-shadow:3px 0 rgba(255,0,90,.75),-3px 0 rgba(0,210,255,.75);clip-path:inset(0 0 0 0);translate:0 0}
+ 15%{text-shadow:-4px 0 rgba(255,0,90,.75),4px 0 rgba(0,210,255,.75);clip-path:inset(18% 0 52% 0);translate:-5px 0}
+ 30%{text-shadow:2px 0 rgba(255,0,90,.75),-2px 0 rgba(0,210,255,.75);clip-path:inset(62% 0 8% 0);translate:4px 0}
+ 45%{text-shadow:-2px 0 rgba(255,90,31,.9),2px 0 rgba(0,210,255,.6);clip-path:inset(4% 0 70% 0);translate:-2px 0}
+ 60%{text-shadow:1px 0 rgba(255,0,90,.5),-1px 0 rgba(0,210,255,.5);clip-path:inset(0 0 0 0);translate:1px 0}
+ 100%{text-shadow:none;clip-path:none;translate:0 0}}
+.bm-curtain::after{content:'';position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px);mix-blend-mode:screen}
+@media (prefers-reduced-motion:reduce){.bm-glitch{animation:none}}

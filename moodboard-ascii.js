@@ -80,7 +80,7 @@
       return {city,group,path:group.querySelector('path'),ring:group.querySelector('.location-ring'),dot:group.querySelector('.location-dot'),label:group.querySelector('.location-label')};
     });
     host.replaceChildren(canvas,overlay);
-    const surface={canvas,context,markers,visible:false};
+    const surface={canvas,context,markers,visible:false,trail:!preview&&window.BeyondTrail?window.BeyondTrail.create(canvas,520,520,{radius:30}):null};
     if(!preview){
       canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;dragging=true;lastX=e.clientX;canvas.setPointerCapture(e.pointerId);});
       canvas.addEventListener('pointermove',e=>{if(!dragging||!canvas.hasPointerCapture(e.pointerId))return;angle+=(e.clientX-lastX)*.008;lastX=e.clientX;dirty=true;});
@@ -92,7 +92,8 @@
     }
     return surface;
   }).filter(Boolean);
-  function draw({context,canvas,markers}) {
+  function draw({context,canvas,markers,trail}) {
+    const now=performance.now();
     context.clearRect(0,0,520,520);
     for(const p of samples){
       const lon=((p.longitude+angle)*180/Math.PI+540)%360;
@@ -103,9 +104,11 @@
       const ramp=land?'=+*oO#@':' .,:;+';
       const density=Math.max(0,Math.min(.999,p.shade+(Math.abs(grain)-.5)*.24));
       const glyph=ramp[Math.floor(density*ramp.length)];
-      context.fillStyle=land?'#0b0b0b':'rgba(11,11,11,.46)';
-      context.fillText(glyph,p.x,p.y);
+      const [heat,hx,hy]=trail?trail.heat(p.x,p.y,now):[0,0,0];
+      if(heat>.12){const push=heat*9;context.fillStyle=heat>.55?'#ff5a1f':land?'#c2400f':'rgba(255,90,31,.75)';context.fillText(trail.glyph(p.x,p.y,now),p.x+hx*push,p.y+hy*push);}
+      else{context.fillStyle=land?'#0b0b0b':'rgba(11,11,11,.46)';context.fillText(glyph,p.x,p.y);}
     }
+    if(trail)trail.drawSparks(context,now);
     canvas.dataset.angle=angle.toFixed(4);
     // Apply the inverse of the renderer's longitude and axial tilt to geographic points.
     // Occlusion follows the sphere depth, so markers never float over the back hemisphere.
@@ -138,7 +141,8 @@
     if(preview){try{storedPause=localStorage.getItem('beyond-motion')==='paused';}catch{}}
     const paused=document.documentElement.classList.contains('motion-paused')||(preview&&(reduce.matches||storedPause));
     if(!paused&&!dragging){angle=(angle+delta*.00018)%(Math.PI*2);dirty=true;}
-    if(!dirty||now-lastPaint<1000/24)return;
+    const hot=surfaces.some(s=>s.trail&&s.trail.active(now));if(hot)dirty=true;
+    if(!dirty||now-lastPaint<1000/(hot?60:24))return;
     surfaces.filter(s=>s.visible).forEach(draw);lastPaint=now;dirty=false;
   }
   frame=requestAnimationFrame(tick);

@@ -1,0 +1,14 @@
+/* Bold Tech · live ring + calmer, confident type scale */
+.bt-ring{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
+[data-name="Core instrument"]{cursor:crosshair}
+.design-root [data-font="285"]{font-size:200px!important;line-height:.9!important}
+.design-root [data-font="260"]{font-size:184px!important;line-height:.9!important}
+.design-root [data-font="210"]{font-size:148px!important;line-height:.95!important}
+.design-root [data-font="168"]{font-size:124px!important;line-height:.95!important}
+.design-root [data-font="150"]{font-size:112px!important;line-height:1!important}
+.design-root [data-font="120"]{font-size:90px!important;line-height:1!important}
+.design-root [data-font="96"]{font-size:72px!important;line-height:1.02!important}
+.design-root [data-font="84"]{font-size:64px!important;line-height:1!important}
+.design-root [data-font="56"]{font-size:46px!important}
+.design-root [data-font="30"]{font-size:26px!important}
+.design-root [data-font="18"],.design-root [data-font="19"]{font-size:16px!important}

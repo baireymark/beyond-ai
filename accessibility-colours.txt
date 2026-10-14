@@ -1,0 +1,46 @@
+BEYONDAI COLOUR REVIEW — 14 OCTOBER 2026
+
+Targets: 4.5:1 for normal text, 3:1 for large text, and 3:1 for meaningful
+control indicators. Large text: at least 24 CSS px, or 18.66 px and bold.
+
+PALETTE MEASUREMENTS
+Body ink on paper: #171714 / #f4f1ec = 15.94:1 — PASS
+Accent text on paper: #a92e08 / #f4f1ec = 6.05:1 — PASS
+Primary button text: #fffefa / #a92e08 = 6.75:1 — PASS
+Dark-card text: #fffefa / #201924 = 16.97:1 — PASS
+Accent on dark card: #ffaf82 / #201924 = 9.55:1 — PASS
+Ink on bright brand orange: #171714 / #ff4200 = 5.16:1 — PASS
+Muted labels on paper: #655e55 / #f6f4ee = 5.81:1 — PASS
+Switch thumb on off track: #fffefa / #645d62 = 6.34:1 — PASS
+
+BROWSER CHECKS
+Computed foreground colours were compared with composited solid ancestor
+backgrounds, using each text element's font size and weight.
+Desktop: Bold Tech 178 elements; Moodboard 264; Stack Builder 188; hub 34.
+Mobile: Bold Tech 72 elements; Moodboard 94; Stack Builder 64.
+No below-target text pairs remained in these sampled page states.
+Mobile layout was checked at a 390 px browser viewport (375 px content area),
+with no horizontal document overflow on the three design pages.
+
+CHANGES
+Replaced low-contrast white/grey text on pale Figma surfaces; darkened small
+orange text on light backgrounds; used light peach accents on dark surfaces;
+used dark text on bright-orange buttons or white text on darker orange.
+Added solid backings for orbit labels, product details and stack controls.
+Focus uses dark and light outlines so it remains distinguishable across both
+light and dark surfaces. Switch thumb/track colours exceed 3:1.
+
+INTERACTION CHECKS
+Keyboard stack switches, layer separation, project-brief selection, product
+selection/details, original project imagery, pause/play, ASCII fixed-grid
+rendering, mobile stack controls, and three-direction navigation checked.
+
+SCOPE
+This checks text palettes and selected interaction states. It is not a full
+WCAG conformance audit. Gradients, artwork, animated canvas pixels, logo
+graphics, every hover pixel, and third-party destination pages are not covered
+by the computed solid-background check. Key layouts were reviewed visually.
+
+REFERENCES
+https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html
+https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html

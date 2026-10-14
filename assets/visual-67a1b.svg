@@ -1,0 +1,17 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="860" height="360" viewBox="0 0 860 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Floor glow" filter="url(#filter0_f_0_104)">
+<ellipse cx="430" cy="180" rx="380" ry="130" fill="url(#paint0_radial_0_104)"/>
+</g>
+<defs>
+<filter id="filter0_f_0_104" x="0" y="0" width="860" height="360" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feGaussianBlur stdDeviation="25" result="effect1_foregroundBlur_0_104"/>
+</filter>
+<radialGradient id="paint0_radial_0_104" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(430 180) scale(380 130)">
+<stop stop-color="#FF4200" stop-opacity="0.45098"/>
+<stop offset="0.6" stop-color="#FF4200" stop-opacity="0.2"/>
+<stop offset="1" stop-color="#F4F1EC" stop-opacity="0"/>
+</radialGradient>
+</defs>
+</svg>

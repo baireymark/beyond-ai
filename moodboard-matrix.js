@@ -42,13 +42,13 @@
     const ctx=canvas.getContext('2d');if(!ctx)return null;
     ctx.scale(2,2);ctx.font='10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';host.replaceChildren(canvas);
     if(host.classList.contains('mobile-matrix-art'))host.style.aspectRatio=`${data.width}/${data.height}`;
-    const surface={host,canvas,ctx,data,cells:characterGrid(data),index,visible:false,pointer:null};
+    const surface={host,canvas,ctx,data,cells:characterGrid(data),index,visible:false,pointer:null,trail:window.BeyondTrail?window.BeyondTrail.create(canvas,data.width,data.height,{radius:26}):null};
     canvas.addEventListener('pointermove',e=>{const r=canvas.getBoundingClientRect();surface.pointer={x:(e.clientX-r.left)/r.width*data.width,y:(e.clientY-r.top)/r.height*data.height};});
     canvas.addEventListener('pointerleave',()=>surface.pointer=null);
     return surface;
   }).filter(Boolean);
   function render(s,time){
-    const {ctx,data,cells,index,pointer}=s,{width:w,height:h}=data;
+    const {ctx,data,cells,index,pointer,trail}=s,{width:w,height:h}=data;const now=performance.now();
     ctx.clearRect(0,0,w,h);ctx.fillStyle=data.color;ctx.globalAlpha=1;
     const t=time*.001;
     // The grid and font size stay fixed; only the character density changes.
@@ -62,8 +62,11 @@
       const illumination=Math.min(1,light*.86+pointerLight);
       const shade=index===4 ? .2+.8*illumination : 1-.85*illumination;
       const level=Math.max(1,Math.min(ramp.length-1,Math.round(Math.sqrt(density)*shade*(ramp.length-1))));
-      ctx.fillText(ramp[level],cx,cy);
+      const [heat,hx,hy]=trail?trail.heat(cx,cy,now):[0,0,0];
+      if(heat>.12){ctx.fillStyle=heat>.5?'#ff5a1f':'#c2400f';ctx.fillText(trail.glyph(cx,cy,now),cx+hx*heat*7,cy+hy*heat*7);ctx.fillStyle=data.color;}
+      else ctx.fillText(ramp[level],cx,cy);
     }
+    if(trail)trail.drawSparks(ctx,now);
     ctx.globalAlpha=1;s.canvas.dataset.phase=time.toFixed(1);
   }
   const observer=new IntersectionObserver(entries=>{
@@ -74,7 +77,7 @@
   function tick(now){
     frame=requestAnimationFrame(tick);const delta=Math.min(60,now-last);last=now;
     if(document.hidden||document.documentElement.classList.contains('motion-paused')||!surfaces.some(s=>s.visible))return;
-    time+=delta;if(now-paint<1000/24)return;
+    time+=delta;const hot=surfaces.some(s=>s.visible&&s.trail&&s.trail.active(now));if(now-paint<1000/(hot?60:24))return;
     surfaces.filter(s=>s.visible).forEach(s=>render(s,time));paint=now;
   }
   frame=requestAnimationFrame(tick);

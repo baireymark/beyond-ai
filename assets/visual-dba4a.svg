@@ -1,0 +1,10 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="1040" height="353.6" viewBox="0 0 1040 353.6" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path id="Orbit 520" d="M520 0.5C663.554 0.5 793.497 20.2843 887.534 52.2568C934.555 68.2439 972.571 87.2694 998.822 108.371C1025.08 129.476 1039.5 152.603 1039.5 176.8C1039.5 200.996 1025.08 224.123 998.822 245.229C972.571 266.33 934.555 285.356 887.534 301.343C793.497 333.315 663.554 353.1 520 353.1C376.446 353.1 246.503 333.315 152.466 301.343C105.445 285.356 67.4286 266.33 41.1777 245.229C14.9223 224.123 0.5 200.996 0.5 176.8C0.500079 152.603 14.9224 129.476 41.1777 108.371C67.4285 87.2694 105.445 68.2439 152.466 52.2568C246.503 20.2843 376.446 0.5 520 0.5Z" stroke="url(#paint0_linear_0_36)"/>
+<defs>
+<linearGradient id="paint0_linear_0_36" x1="0" y1="176.8" x2="1040" y2="176.8" gradientUnits="userSpaceOnUse">
+<stop stop-color="#FF4200" stop-opacity="0.0509804"/>
+<stop offset="0.5" stop-color="#FF4200" stop-opacity="0.45098"/>
+<stop offset="1" stop-color="#FF4200" stop-opacity="0.0509804"/>
+</linearGradient>
+</defs>
+</svg>

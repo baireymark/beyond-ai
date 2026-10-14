@@ -6,8 +6,8 @@
   const study = document.body.dataset.study;
   const root = $('.design-root');
   if (!root) return;
-  const names = ['Bold Tech · Study B','Moodboard','Particles · Light','Clear Plan · Refined','Big Ideas, Real Systems','Work, Rewired','Connected Terrain','Systems · Refined'];
-  const slugs = ['bold-tech','moodboard','particles','clear-plan','big-ideas','work-rewired','connected-terrain','systems'];
+  const names = ['Bold Tech · Study B','Moodboard','Stack Builder','Particles · Light'];
+  const slugs = ['bold-tech','moodboard','stack-builder','particles'];
   const index = slugs.indexOf(study);
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const preview = new URLSearchParams(location.search).has('preview');
@@ -26,7 +26,7 @@
   let paused=reduced.matches;
   try {paused=paused||localStorage.getItem('beyond-motion')==='paused';} catch {}
   const ui=$('#experience-ui');
-  ui.innerHTML=`<div class="study-progress" aria-hidden="true"></div><nav class="study-dock" aria-label="Design studies"><a href="index.html" aria-label="All eight designs" title="All eight designs">▦</a><a href="${slugs[(index+7)%8]}.html" aria-label="Previous design">←</a><span class="study-title">${String(index+1).padStart(2,'0')} / ${names[index]}</span><a href="${slugs[(index+1)%8]}.html" aria-label="Next design">→</a><button id="motion-toggle" aria-label="Pause animations" aria-pressed="false" title="Pause animations">Ⅱ</button></nav><dialog class="experience-dialog" aria-labelledby="dialog-title"><button class="dialog-close" aria-label="Close dialog">×</button><div class="dialog-content"></div></dialog><div class="toast" role="status" hidden></div>`;
+  ui.innerHTML=`<div class="study-progress" aria-hidden="true"></div><nav class="study-dock" aria-label="Design studies"><a href="index.html" aria-label="All four designs" title="All four designs">▦</a><a href="${slugs[(index+slugs.length-1)%slugs.length]}.html" aria-label="Previous design">←</a><span class="study-title">${String(index+1).padStart(2,'0')} / ${names[index]}</span><a href="${slugs[(index+1)%slugs.length]}.html" aria-label="Next design">→</a><button id="motion-toggle" aria-label="Pause animations" aria-pressed="false" title="Pause animations">Ⅱ</button></nav><dialog class="experience-dialog" aria-labelledby="dialog-title"><button class="dialog-close" aria-label="Close dialog">×</button><div class="dialog-content"></div></dialog><div class="toast" role="status" hidden></div>`;
   const dialog=$('dialog',ui),content=$('.dialog-content',dialog);
   let returnFocus=null,toastTimer;
   function toast(message){const t=$('.toast');t.textContent=message;t.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.hidden=true,4200);}
@@ -171,6 +171,7 @@
     else if(/let.s|talk|project|build|demo|contact|brief|send|message|consult|start|discuss/i.test(label))makeButton(el,()=>contact());
   }}
   wireLoose();
+  window.BeyondExperience={contact,product,project,toast,jump};
   for(const el of byName(/Menu( button)?$/i))makeButton(el,()=>{show(`<div class="dialog-kicker">EXPLORE BEYOND AI</div><h2 id="dialog-title">Where next?</h2><nav class="mobile-menu">${['services','products','work','education','contact'].filter(k=>$('#'+k)).map(k=>`<a href="#${k}">${k[0].toUpperCase()+k.slice(1)} ↗</a>`).join('')}</nav>`);$$('a',content).forEach(a=>a.addEventListener('click',()=>dialog.close()));},'Open navigation');
   for(const el of byName(/Question and answer/)){
     const children=[...el.children].filter(c=>txt(c));if(children.length<2)continue;const q=children[0],a=children[1];q.classList.add('faq-question');a.classList.add('faq-answer');a.id=`answer-${Math.random().toString(36).slice(2,9)}`;q.setAttribute('aria-expanded','true');q.setAttribute('aria-controls',a.id);makeButton(q,()=>{a.hidden=!a.hidden;q.setAttribute('aria-expanded',String(!a.hidden));});
@@ -224,7 +225,7 @@
         for(const row of byName(/Question and answer/,section)){const texts=$$('p,[role=button]',row).map(txt).filter(Boolean);if(texts.length>=2){const d=document.createElement('details');d.className='mobile-faq';d.innerHTML=`<summary>${escape(texts[0])}</summary><p>${escape(texts.at(-1))}</p>`;s.append(d);}}
       }else{
         for(const el of candidates){const t=txt(el),font=parseFloat(getComputedStyle(el).fontSize);if(!t||seen.has(t)||t.length<3||/^[↗→+—\/\d°:.\s-]{1,8}$/.test(t))continue;
-          let artwork=false;for(let p=el.parentElement;p&&p!==section;p=p.parentElement){if(/^(Wireframe|Core instrument|Light tunnel|Dither globe|Cartographic terrain|Routing field|Logo hub|Satellite\/|Micro chart|Readout)/.test(name(p))){artwork=true;break;}}if(artwork)continue;
+          let artwork=false;for(let p=el.parentElement;p&&p!==section;p=p.parentElement){if(/^(Isometric stack|Wireframe|Core instrument|Light tunnel|Dither globe|Cartographic terrain|Routing field|Logo hub|Satellite\/|Micro chart|Readout)/.test(name(p))){artwork=true;break;}}if(artwork)continue;
           if(font<14&&t.length<65)continue;
           if(/^(Services|Products|Education|Work|Contact|LinkedIn|Facebook|Home|Board|Explore product|LET.S TALK|Start a project)$/i.test(t))continue;
           if(el.closest('a')||el.tagName==='A')continue;
@@ -235,7 +236,7 @@
         }
       }
       if(section.id==='home'){
-        const art=byName(/^(Core instrument|Dither globe|Light tunnel|Wireframe ring|Chromatic wireform|Cartographic terrain|Routing field|Topographic map)/,section)[0];
+        const art=byName(/^(Isometric stack|Core instrument|Dither globe|Light tunnel|Wireframe ring|Chromatic wireform|Cartographic terrain|Routing field|Topographic map)/,section)[0];
         if(art){const d=dims(art);const wrapper=document.createElement('div');wrapper.className='mobile-art';const clone=art.cloneNode(true);clone.removeAttribute('id');$$('[id]',clone).forEach(el=>el.removeAttribute('id'));clone.style.width=d.w+'px';clone.style.height=d.h+'px';clone.style.zoom='1';wrapper.dataset.artWidth=d.w;wrapper.dataset.artHeight=d.h;wrapper.append(clone);s.append(wrapper);}
         const actions=document.createElement('div');actions.className='mobile-actions';actions.innerHTML='<a href="#contact" class="primary">Start a project ↗</a><a href="#products">Explore products →</a>';s.append(actions);
       }
