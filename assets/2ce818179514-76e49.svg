@@ -1,0 +1,8 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="204" height="420" viewBox="0 0 204 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="UI">
+<path id="Vector" d="M30 300C60 240 40 200 90 170C140 140 150 120 170 80" stroke="#2F5BFF" stroke-width="4" stroke-linecap="round"/>
+<path id="Vector_2" d="M30 307C33.866 307 37 303.866 37 300C37 296.134 33.866 293 30 293C26.134 293 23 296.134 23 300C23 303.866 26.134 307 30 307Z" fill="white"/>
+<path id="Vector_3" d="M170 89C174.971 89 179 84.9706 179 80C179 75.0294 174.971 71 170 71C165.029 71 161 75.0294 161 80C161 84.9706 165.029 89 170 89Z" fill="#7C9BFF"/>
+<path id="Vector_4" d="M0 120H204M0 200H204M60 0V400M140 0V400" stroke="white" stroke-opacity="0.06"/>
+</g>
+</svg>
