@@ -40,3 +40,6 @@
 .mw-tab-on{background:#11110f!important}.mw-tab-on p{color:#fff!important}
 [data-name="Apps (selected)"]:not(.mw-tab-on){background:transparent!important}[data-name="Apps (selected)"]:not(.mw-tab-on) p{color:#11110f!important}
 #work.design-section{height:auto!important;min-height:1456px;padding-bottom:20px}
+/* Decorative grid lines sit above the ASCII art; let the pointer reach the canvases */
+.design-root [data-name="v2/Grid lines"],.design-root [data-name="v2/Grid lines"] *,.design-root [data-name$="Globe slot"]{pointer-events:none}
+.design-root [data-name="Dither globe"],.design-root [data-name="Dither"]{z-index:5}

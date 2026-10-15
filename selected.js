@@ -26,7 +26,6 @@
   all('.tactile,.resume-link,.mobile-actions a,.mobile-actions button').filter(el=>!el.querySelector('.tactile')).forEach(el=>{
    el.classList.add('magnetic-control');el.addEventListener('pointermove',e=>{if(paused()||!fine.matches)return;const r=el.getBoundingClientRect();el.style.translate=`${((e.clientX-r.left)/r.width-.5)*7}px ${((e.clientY-r.top)/r.height-.5)*7}px`;});el.addEventListener('pointerleave',()=>el.style.removeProperty('translate'));
   });
-  all('h1,.gallery-heading h1').forEach(el=>{el.classList.add('hover-headline');el.addEventListener('pointermove',e=>{if(!paused()){const r=el.getBoundingClientRect();el.style.setProperty('--headline-x',100*(e.clientX-r.left)/r.width+'%');}});});
   const halo=document.createElement('div');halo.className='interaction-halo';halo.setAttribute('aria-hidden','true');document.body.append(halo);
   document.addEventListener('pointermove',e=>{if(!fine.matches||paused())return;halo.style.left=e.clientX+'px';halo.style.top=e.clientY+'px';halo.style.opacity=e.target.closest('a,button,[role="button"],[role="switch"],canvas')?'.6':'0';halo.classList.toggle('over-control',!!e.target.closest('a,button,[role="button"]'));},{passive:true});
   document.addEventListener('pointerout',e=>{if(!e.relatedTarget)halo.style.opacity=0;});
@@ -75,11 +74,11 @@
    const suffix=el.dataset.name.slice(7),members=[el,one(`[data-name="Planet glow/${suffix}"]`,orbit),one(`[data-name="Label/${suffix}"]`,orbit)].filter(Boolean);return {members,x,y};});
   planets.forEach((el,i)=>{const label=bodies[i].members.at(-1);all('[data-wired]',label).forEach(c=>{c.removeAttribute('role');c.removeAttribute('tabindex');});bind(label,()=>selectProduct(i),'Select '+products[i].title);});
   new IntersectionObserver(e=>orbitVisible=e[0].isIntersecting).observe(orbit);
-  orbit.addEventListener('pointerdown',e=>{if(e.target.closest('[role="button"],button,a,[data-name^="Detail"]'))return;orbitDrag=true;orbitX=e.clientX;orbit.setPointerCapture(e.pointerId);});
-  orbit.addEventListener('pointermove',e=>{orbitHover=!!e.target.closest('[role="button"],button,[data-name^="Detail"]');if(orbitDrag){orbitAngle+=(e.clientX-orbitX)*.004;orbitX=e.clientX;}});
-  orbit.addEventListener('pointerup',()=>orbitDrag=false);orbit.addEventListener('pointercancel',()=>orbitDrag=false);orbit.addEventListener('pointerleave',()=>orbitHover=false);
+  // Scrolling through the section turns the orbit; no drag, so nothing gets text-selected.
+  let orbitScroll=0;const spin=()=>{const r=orbit.getBoundingClientRect();orbitScroll=(innerHeight-r.top)/(innerHeight+r.height)*Math.PI*1.2;};addEventListener('scroll',spin,{passive:true});spin();
+  orbit.addEventListener('pointermove',e=>{orbitHover=!!e.target.closest('[role="button"],button,[data-name^="Detail"]');});orbit.addEventListener('pointerleave',()=>orbitHover=false);
   let orbitFrame;function drawOrbit(t){orbitFrame=requestAnimationFrame(drawOrbit);if(!orbitVisible||document.hidden||t-lastOrbit<33)return;const dt=Math.min(t-lastOrbit,50);lastOrbit=t;if(!paused()&&!orbitDrag&&!orbitHover&&!orbit.contains(document.activeElement))orbitAngle+=dt*.000025;
-   const a=orbitAngle;for(const b of bodies){const dx=b.x*Math.cos(a)-b.y*Math.sin(a)-b.x,dy=(b.x*Math.sin(a)+b.y*Math.cos(a)-b.y)*.44;b.members.forEach(el=>el.style.translate=`${dx}px ${dy}px`);}}
+   const a=orbitAngle+(paused()?0:orbitScroll);for(const b of bodies){const dx=b.x*Math.cos(a)-b.y*Math.sin(a)-b.x,dy=(b.x*Math.sin(a)+b.y*Math.cos(a)-b.y)*.44;b.members.forEach(el=>el.style.translate=`${dx}px ${dy}px`);}}
   orbitFrame=requestAnimationFrame(drawOrbit);addEventListener('pagehide',()=>cancelAnimationFrame(orbitFrame));addEventListener('pageshow',e=>{if(e.persisted)orbitFrame=requestAnimationFrame(drawOrbit);});
   const portfolio=window.BEYOND_PORTFOLIO||[],norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,''),wallItems=new WeakMap(),originalItems=[];
   function fillTile(el,item){wallItems.set(el,item);el.innerHTML=`<img class="stack-work-image" src="${item.image}" alt="${item.name}" loading="lazy"><span class="stack-tile-caption">${item.name} ↗</span>`;el.setAttribute('aria-label','View '+item.name);el.dataset.type=item.type;}

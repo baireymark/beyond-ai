@@ -16,3 +16,12 @@
 .design-root [data-font="16"]{font-size:14.5px!important}
 .design-root [data-font="26"]{font-size:22px!important}
 .design-root [data-font="64"]{font-size:54px!important}
+/* Planets turn on scroll; keep drags/clicks from selecting text */
+.design-root #products{user-select:none;-webkit-user-select:none}
+/* Configurator ("Your stack") panel removed */
+.design-root [data-name="Configurator panel"]{display:none!important}
+/* Contact prompt: smaller card, and the "Prefer to talk" line clears it */
+.design-root #contact [data-name="Prompt card"]{width:760px!important;left:340px!important;height:auto!important;padding-bottom:22px!important}
+.design-root #contact [data-name="Prompt card"] [data-name="Input"],.design-root #contact [data-name="Prompt card"] [data-name="Controls"]{width:704px!important}
+.design-root #contact .stack-prompt-input{font-size:17px;min-height:48px;resize:none}
+.design-root #contact p.sae6af505b{top:566px!important}

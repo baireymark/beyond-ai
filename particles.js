@@ -22,11 +22,13 @@
   root.setAttribute('aria-label',root.textContent.replace(/\s+/g,' ').trim());walk(root);});
 
  // Reveal on scroll
- const io=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;e.target.classList.add('in');io.unobserve(e.target);
+ const io=new IntersectionObserver(es=>es.forEach(e=>{const counter=e.target.classList.contains('count');if(!counter){e.target.classList.toggle('in',e.isIntersecting);return;}if(!e.isIntersecting)return;e.target.classList.add('in');io.unobserve(e.target);
   if(e.target.classList.contains('count')){const to=+e.target.dataset.to,t0=performance.now();const step=t=>{const k=clamp((t-t0)/1400,0,1);e.target.textContent=Math.round(to*(1-Math.pow(1-k,3)));if(k<1)requestAnimationFrame(step);};requestAnimationFrame(step);}
  }),{threshold:.18,rootMargin:'0px 0px -6% 0px'});
  $$('.rv,.split,.why,.count').forEach((el,i)=>{if(el.classList.contains('rv'))el.style.transitionDelay=(i%4)*90+'ms';io.observe(el);});
- if(preview||reduce)$$('.rv,.split,.why').forEach(el=>el.classList.add('in'));
+ if(preview||reduce)$('.rv,.split,.why').forEach(el=>el.classList.add('in'));
+ // Outline numbers fill as they rise through the viewport and empty again on the way back up.
+ const whyNums=$$('.why .n');const fillNums=()=>whyNums.forEach(n=>{const r=n.getBoundingClientRect(),p=reduce?1:clamp((innerHeight*.9-r.top)/(innerHeight*.45),0,1);n.style.backgroundPosition=`0 ${(1-p)*100}%`;});addEventListener('scroll',fillNums,{passive:true});addEventListener('resize',fillNums);fillNums();
 
  // Nav + drawer
  const nav=$('#nav'),menu=$('.p-menu'),drawer=$('#drawer');

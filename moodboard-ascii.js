@@ -105,7 +105,7 @@
       const density=Math.max(0,Math.min(.999,p.shade+(Math.abs(grain)-.5)*.24));
       const glyph=ramp[Math.floor(density*ramp.length)];
       const [heat,hx,hy]=trail?trail.heat(p.x,p.y,now):[0,0,0];
-      if(heat>.12){const push=heat*9;context.fillStyle=heat>.55?'#ff5a1f':land?'#c2400f':'rgba(255,90,31,.75)';context.fillText(trail.glyph(p.x,p.y,now),p.x+hx*push,p.y+hy*push);}
+      if(heat>.12){context.fillStyle=heat>.55?'#ff5a1f':land?'#c2400f':'rgba(255,90,31,.75)';context.fillText(trail.glyph(p.x,p.y,now,heat),p.x,p.y);}
       else{context.fillStyle=land?'#0b0b0b':'rgba(11,11,11,.46)';context.fillText(glyph,p.x,p.y);}
     }
     if(trail)trail.drawSparks(context,now);

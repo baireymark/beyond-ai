@@ -16,7 +16,7 @@
     const eased=p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;window.__stackX=paused()?0:eased;
     window.__stackM.x=lerp(window.__stackM.x,mxT,.06);window.__stackM.y=lerp(window.__stackM.y,myT,.06);
     $$('.stack-canvas').forEach(c=>{const k=eased;c.style.filter=k>.02?`drop-shadow(${k*5}px 0 0 rgba(255,40,120,.28)) drop-shadow(${-k*5}px 0 0 rgba(0,190,255,.28))`:'';
-      if((lastX<.5)!==(k<.5)&&!paused()){c.classList.remove('sf-glitch');void c.offsetWidth;c.classList.add('sf-glitch');window.BeyondMotion?.haptic('pulse');}});
+      if((lastX<.5)!==(k<.5)&&!paused()){window.BeyondMotion?.haptic('pulse');}});
     lastX=eased;requestAnimationFrame(tick);})();
 
   /* ---- Planets: softer colour, magnetic pull toward the pointer, glow follows ---- */

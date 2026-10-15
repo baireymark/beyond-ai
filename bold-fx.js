@@ -50,13 +50,12 @@
         const dist=Math.hypot(px-(x0+vx*u),py-(y0+vy*u));let heat=Math.max(0,1-dist/95);heat=heat*heat;
         for(const wv of st.waves){const d=Math.abs(Math.atan2(Math.sin(a-wv.a-wv.t*5),Math.cos(a-wv.a-wv.t*5)));const d2=Math.abs(Math.atan2(Math.sin(a-wv.a+wv.t*5),Math.cos(a-wv.a+wv.t*5)));heat=Math.max(heat,Math.max(0,1-Math.min(d,d2)/.18)*(1-wv.t/1.4));}
         st.heat[i]=lerp(st.heat[i],heat,heat>st.heat[i]?.35:.06);const hh=st.heat[i];
-        st.len[i]=lerp(st.len[i]||L,L+hh*70,.2);const LL=st.len[i];
-        // bars bend toward the pointer
-        const bend=hh*.06*Math.sign(Math.sin(pa-a));const ea=a+bend;
+        st.len[i]=lerp(st.len[i]||L,L+hh*12,.2);const LL=st.len[i];
+        // bars stay on their own angle; the pointer only lights them
+        const ea=a;
         ctx.strokeStyle=hh>.04?`rgb(${lerp(185,255,hh)|0},${lerp(180,90,hh)|0},${lerp(171,31,hh)|0})`:'rgba(23,23,20,.26)';
-        ctx.lineWidth=hh>.04?1.6+hh*1.4:1.1;
+        ctx.lineWidth=hh>.04?1.1+hh*.8:1.1;
         ctx.beginPath();ctx.moveTo(470+ca*238,470+sa*238);ctx.lineTo(470+Math.cos(ea)*(238+LL),470+Math.sin(ea)*(238+LL));ctx.stroke();
-        if(hh>.5){ctx.fillStyle=`rgba(255,90,31,${hh})`;ctx.fillRect(470+Math.cos(ea)*(238+LL+6)-1.5,470+Math.sin(ea)*(238+LL+6)-1.5,3,3);}
       }
       // pointer readout near the ring
       if(pr>180&&pr<520&&performance.now()-lastMove<2500){const deg=((pa*180/Math.PI)+450)%360;ctx.font='500 11px "Geist Mono",monospace';ctx.fillStyle='#c2400f';

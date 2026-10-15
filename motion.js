@@ -10,6 +10,9 @@
  const study=document.body.dataset.study||'hub';
  const dark=document.body.dataset.theme==='dark';
  document.documentElement.classList.add('bm',dark?'bm-dark':'bm-light');
+ // The hub and portfolio pages are static: no motion outside the four designs.
+ const staticPage=study==='hub'||/portfolio\.html$/.test(location.pathname);
+ if(staticPage)document.documentElement.classList.add('bm-static','motion-paused');
 
  /* ---------- Haptics: Vibration API on Android, the switch-input tick on iOS 18+, visual everywhere ---------- */
  const patterns={tick:6,tap:10,soft:[4,30,4],pulse:[12,40,18],success:[10,60,10,60,24],error:[40,40,40]};
@@ -49,7 +52,7 @@
  /* ---------- Cursor: dot + lagging ring that morphs over targets and shows context ---------- */
  const cur=document.createElement('div');cur.className='bm-cursor';cur.setAttribute('aria-hidden','true');cur.innerHTML='<i class="ring"><b></b></i><i class="dot"></i>';document.body.append(cur);
  const ring=$('.ring',cur),dot=$('.dot',cur),label=$('b',cur);
- let mx=-100,my=-100,rx=-100,ry=-100,rw=34,rh=34,tw=34,th=34,target=null,shown=false;
+ let rk=1,mx=-100,my=-100,rx=-100,ry=-100,rw=34,rh=34,tw=34,th=34,target=null,shown=false;
  const labelFor=(el,raw)=>{
   if(el?.dataset.cursor)return el.dataset.cursor;
   if(el&&el.tagName!=='CANVAS'){if(el.matches('.rail,.rail *'))return'DRAG';if(el.matches('.design-card'))return'ENTER';
@@ -61,14 +64,17 @@
   cur.classList.toggle('on-control',!!el);cur.classList.toggle('has-label',!!lab);cur.classList.toggle('on-text',!!e.target.closest('input,textarea'));
   cur.classList.add('visible');},{passive:true});
  document.addEventListener('pointerleave',()=>cur.classList.remove('visible'));
- document.addEventListener('pointerdown',()=>cur.classList.add('down'));addEventListener('pointerup',()=>cur.classList.remove('down'));
+ // keep the cursor above modal dialogs (top layer) by moving it into the open one
+ const home=()=>{const d=[...document.querySelectorAll('dialog[open]')].pop();const host=d||document.body;if(cur.parentElement!==host)host.append(cur);};
+ new MutationObserver(home).observe(document.body,{subtree:true,attributes:true,attributeFilter:['open']});
+ document.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'){mx=e.clientX;my=e.clientY;}cur.classList.add('down');});const release=()=>cur.classList.remove('down');['pointerup','pointercancel','dragend','blur','lostpointercapture'].forEach(t=>addEventListener(t,release,true));
+ document.addEventListener('pointermove',e=>{if(!e.buttons)release();},{passive:true}); document.addEventListener('dragstart',e=>{if(e.target.closest?.('a,img'))e.preventDefault();});
  (function loop(){
   const big=cur.classList.contains('has-label');tw=big?78:(target?52:34);th=tw;
-  // snap the ring around small buttons for a "magnetic" outline
-  if(target&&!big&&target.matches('button,a')&&!target.matches('.design-card,.tile,.pcard')){const r=target.getBoundingClientRect();if(r.width<260&&r.height<90){tw=r.width+14;th=r.height+14;rx=lerp(rx,r.left+r.width/2,.22);ry=lerp(ry,r.top+r.height/2,.22);}else{rx=lerp(rx,mx,.18);ry=lerp(ry,my,.18);}}
-  else{rx=lerp(rx,mx,.18);ry=lerp(ry,my,.18);}
-  rw=lerp(rw,tw,.2);rh=lerp(rh,th,.2);
-  ring.style.transform=`translate(${rx-rw/2}px,${ry-rh/2}px)`;ring.style.width=rw+'px';ring.style.height=rh+'px';ring.style.borderRadius=Math.min(rw,rh)/2+'px';
+  // the ring always trails the pointer itself; no snapping to stale targets after clicks
+  rx=lerp(rx,mx,.18);ry=lerp(ry,my,.18);
+  rw=lerp(rw,tw,.2);rh=lerp(rh,th,.2);rk=lerp(rk,cur.classList.contains('down')?.82:1,.3);
+  ring.style.transform=`translate(${rx-rw/2}px,${ry-rh/2}px) scale(${rk})`;ring.style.width=rw+'px';ring.style.height=rh+'px';ring.style.borderRadius='50%';
   dot.style.transform=`translate(${mx-3}px,${my-3}px)`;requestAnimationFrame(loop);})();
 
  /* ---------- Magnetic pull on primary actions ---------- */
@@ -77,7 +83,7 @@
   el.addEventListener('pointerleave',()=>el.style.translate='');});
 
  /* ---------- Text scramble on hover for small labels and links ---------- */
- const glyphs='░▒▓<>/\\|_-=+*#%01ABCDEF';
+ const glyphs='·✢✳✶✻✽';
  function scramble(el){if(el._sc||paused())return;const orig=el.dataset.scrambleText||(el.dataset.scrambleText=el.textContent);el._sc=1;let f=0;const n=orig.length;
   const tick=()=>{f++;el.textContent=[...orig].map((c,i)=>c===' '||i<f/2?c:glyphs[Math.random()*glyphs.length|0]).join('');if(f/2<n)requestAnimationFrame(tick);else{el.textContent=orig;el._sc=0;}};tick();}
  const scrambleTargets=()=>$$('.source-link,.p-foot nav a,.p-drawer a small,.card-tags span,.study-title,.more .p-mono,[data-scramble]').filter(el=>el.children.length===0&&el.textContent.trim().length<60);
@@ -87,23 +93,9 @@
  const bar=document.createElement('div');bar.className='bm-progress';bar.setAttribute('aria-hidden','true');document.body.append(bar);
  const prog=()=>{const h=document.documentElement.scrollHeight-innerHeight;bar.style.transform=`scaleX(${h>0?scrollY/h:0})`;};addEventListener('scroll',prog,{passive:true});prog();
 
- /* ---------- Page transitions: an ASCII curtain that decodes the destination ---------- */
- const curtain=document.createElement('div');curtain.className='bm-curtain';curtain.setAttribute('aria-hidden','true');curtain.innerHTML='<pre></pre><span></span>';document.body.append(curtain);
- const pre=$('pre',curtain),cap=$('span',curtain);
- const pageNames={'index':'THE DESIGN PLAYGROUND','bold-tech':'01 · BOLD TECH','moodboard':'02 · MOODBOARD','stack-builder':'03 · STACK BUILDER','particles':'04 · PARTICLES · LIGHT','portfolio':'APPS & WEBSITES'};
- function fill(density){const cols=Math.ceil(innerWidth/9),rows=Math.ceil(innerHeight/16);let s='';const ramp=' .:-=+*#%@';
-  for(let y=0;y<rows;y++){for(let x=0;x<cols;x++){const v=Math.random()<density?ramp[1+(Math.random()*(ramp.length-1))|0]:' ';s+=v;}s+='\n';}pre.textContent=s;}
- function animateCurtain(from,to,ms,done){if(reduce.matches){done?.();return;}const t0=performance.now();const step=t=>{const k=Math.min(1,(t-t0)/ms);fill(from+(to-from)*k);if(k<1)requestAnimationFrame(step);else done?.();};requestAnimationFrame(step);}
- let entering=false;try{entering=sessionStorage.getItem('bm-transition')==='1';sessionStorage.removeItem('bm-transition');}catch{}
- if(entering&&!reduce.matches){curtain.classList.add('show','instant');cap.textContent=pageNames[study==='hub'?(/portfolio/.test(location.pathname)?'portfolio':'index'):study]||'';
-  requestAnimationFrame(()=>{curtain.classList.remove('instant');animateCurtain(.5,0,520,()=>curtain.classList.remove('show'));});}
- document.addEventListener('click',e=>{
-  const a=e.target.closest('a[href]');if(!a||e.defaultPrevented||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target==='_blank'||a.hasAttribute('download'))return;
-  const url=new URL(a.href,location.href);if(url.origin!==location.origin||!/\.html$/.test(url.pathname)||(url.pathname===location.pathname))return;
-  if(reduce.matches)return;e.preventDefault();const slug=url.pathname.split('/').pop().replace('.html','');cap.textContent=pageNames[slug]||'';
-  curtain.classList.add('show');haptic('soft');animateCurtain(0,.55,420,()=>{try{sessionStorage.setItem('bm-transition','1');}catch{}location.href=url.href;});
- });
- addEventListener('pageshow',e=>{if(e.persisted)curtain.classList.remove('show');});
+ /* Page transitions: no loading curtain — links navigate straight away. */
+ const curtain=document.createElement('div');curtain.className='bm-curtain';curtain.hidden=true;
+ try{sessionStorage.removeItem('bm-transition');}catch{}
 
  /* ---------- Particles page has no experience dock; give it the same four-way switcher ---------- */
  if(study==='particles'){
@@ -119,16 +111,16 @@
 
  /* ---------- ASCII lens on project imagery ----------
     Glyphs are coloured by the image itself (drawn with source-in), so this works from file:// without reading pixels. */
- const RAMP='.:-=+*#%@&$';
+ const RAMP='·✢✳✶✻✽';
  function asciiLens(host,img,opt={}){
   if(host._ascii)return host._ascii;const bg=opt.bg||'#0e0c0a',edge=opt.edge||'#ff6a2b';
   const c=document.createElement('canvas');c.className='bm-ascii';c.setAttribute('aria-hidden','true');host.append(c);
   const g=document.createElement('canvas'),gx=g.getContext('2d'),ctx=c.getContext('2d');
   const st={x:-999,y:-999,in:0,tin:0,wave:-1,wx:0,wy:0,dir:1,run:false,hover:false};
   const CW=7,CH=11;
-  function cover(w,h){const iw=img.naturalWidth||1,ih=img.naturalHeight||1,fit=getComputedStyle(img).objectFit;const s=fit==='contain'?Math.min(w/iw,h/ih):Math.max(w/iw,h/ih);const ir=img.getBoundingClientRect(),hr=host.getBoundingClientRect();
+  function cover(w,h){const iw=img.naturalWidth||1,ih=img.naturalHeight||1,fit=getComputedStyle(img).objectFit;const ir=img.getBoundingClientRect(),hr=host.getBoundingClientRect();
    // draw where the <img> actually sits inside the host
-   const bx=(ir.left-hr.left)*D,by=(ir.top-hr.top)*D,bw=ir.width*D,bh=ir.height*D;const dw=iw*s*(bw/w),dh=ih*s*(bh/h);return [bx+(bw-dw)/2,by+(bh-dh)/2,dw,dh];}
+   const bx=(ir.left-hr.left)*D,by=(ir.top-hr.top)*D,bw=ir.width*D,bh=ir.height*D;const s=fit==='contain'?Math.min(bw/iw,bh/ih):Math.max(bw/iw,bh/ih),dw=iw*s,dh=ih*s;return [bx+(bw-dw)/2,by+(bh-dh)/2,dw,dh];}
   const hash=(x,y,t)=>{const n=Math.sin(x*127.1+y*311.7+t*74.7)*43758.5453;return n-Math.floor(n);};
   function draw(t){
    const r=host.getBoundingClientRect(),w=Math.max(1,r.width*D|0),h=Math.max(1,r.height*D|0);
@@ -146,7 +138,7 @@
     if(waveR>=0){const d=Math.hypot(px-st.wx*D,py-st.wy*D);m=Math.max(m,Math.min(1,(d-waveR)/band+1));}
     if(m<=0||hash(x,y,0)>m*1.6)continue;any=true;
     ctx.fillRect(x*cw,y*ch,cw,ch);
-    const ci=(hash(x,y,m<.9?slice:slice>>3)*RAMP.length)|0;gx.fillText(RAMP[ci],x*cw+D,y*ch);
+    const ci=Math.min(RAMP.length-1,(Math.min(1,m)*(RAMP.length-1)+hash(x,y,0)*.99)|0);gx.fillText(RAMP[ci],x*cw+D,y*ch);
     if(m<.6)edges.push([x*cw+D,y*ch,RAMP[ci]]);
    }
    if(!any&&st.wave<0&&st.tin===0&&st.in<.01)return false;
@@ -180,12 +172,45 @@
 
  /* ---------- Glitch: big headlines split into RGB and slice on hover, and once as they arrive ---------- */
  const bigText=()=>$$('h1,h2,p,span,.p-display').filter(el=>{if(el.closest('.bm-cursor,.bm-curtain,canvas,.giant')||!el.textContent.trim())return false;const fs=parseFloat(getComputedStyle(el).fontSize);return fs>=54&&(el.classList.contains('p-display')||[...el.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()));});
- function glitch(el){if(paused()||el._gl)return;el._gl=1;el.dataset.glitch=el.textContent.replace(/\s+/g,' ').trim();el.classList.add('bm-glitch');haptic('tick');setTimeout(()=>{el.classList.remove('bm-glitch');el._gl=0;},520);}
+ function glitch(el){return;el._gl=1;el.dataset.glitch=el.textContent.replace(/\s+/g,' ').trim();el.classList.add('bm-glitch');haptic('tick');setTimeout(()=>{el.classList.remove('bm-glitch');el._gl=0;},520);}
  setTimeout(()=>{const els=bigText();els.forEach(el=>{el.addEventListener('pointerenter',()=>glitch(el));});
   const gio=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){gio.unobserve(e.target);setTimeout(()=>glitch(e.target),300);}}),{threshold:.6});els.forEach(el=>gio.observe(el));},900);
+ /* ---------- Ember trail on dark text: the pointer lights the letters orange and leaves a fading tail.
+    Driven by one page-level pointer listener, so overlays above the text cannot block it. ---------- */
+ setTimeout(()=>{
+  const lum=c=>{const m=c.match(/[\d.]+/g);if(!m)return 1;const [r,g,b,al]=m.map(Number);if(al===0)return 1;return (.2126*r+.7152*g+.0722*b)/255;};
+  const ownText=el=>[...el.childNodes].some(n=>n.nodeType===3&&n.textContent.trim());
+  const targets=$$('body *').filter(el=>{
+   if(!ownText(el)||el.closest('.bm-cursor,.bm-curtain,canvas,svg,.giant,.why,dialog,.mobile-view,script,style,textarea,select,option'))return false;
+   const cs=getComputedStyle(el);el._baseColor=cs.color;el._baseSize=parseFloat(cs.fontSize);return lum(cs.color)<.3&&cs.backgroundClip!=='text'&&!/text/.test(cs.webkitBackgroundClip||'');});
+  const visible=new Set();const io=new IntersectionObserver(es=>es.forEach(e=>e.isIntersecting?visible.add(e.target):visible.delete(e.target)));targets.forEach(el=>io.observe(el));
+  const active=new Set();let running=false,mx=-1e5,my=-1e5;const N=7;
+  function start(el){el._ember={pts:Array.from({length:N},()=>({x:0,y:0})),a:0,on:true,size:Math.max(14,el._baseSize),fresh:true};
+   el.style.backgroundColor=el._baseColor;el.style.webkitBackgroundClip='text';el.style.backgroundClip='text';el.style.color='transparent';active.add(el);}
+  function stop(el){['background-image','background-color','color','-webkit-background-clip','background-clip'].forEach(p=>el.style.removeProperty(p));el._ember=null;active.delete(el);}
+  function paint(el){const s=el._ember,r=el.getBoundingClientRect(),z=r.width/(el.offsetWidth||r.width)||1,m={x:(mx-r.left)/z,y:(my-r.top)/z};
+   if(s.fresh){s.pts.forEach(p=>{p.x=m.x;p.y=m.y;});s.fresh=false;}
+   s.pts.forEach((p,i)=>{const to=i?s.pts[i-1]:m,k=i?.32:.45;p.x+=(to.x-p.x)*k;p.y+=(to.y-p.y)*k;});
+   s.a+=((s.on?1:0)-s.a)*(s.on?.2:.08);
+   el.style.backgroundImage=s.pts.map((p,i)=>{const f=1-i/N,R=s.size*(1.1+f*.9),al=(s.a*(.25+.75*f)).toFixed(3);return `radial-gradient(circle ${R}px at ${p.x}px ${p.y}px,rgba(255,${80+i*6},31,${al}),rgba(255,90,31,0) 70%)`;}).join(',');
+   if(!s.on&&s.a<.01)stop(el);}
+  function loop(){active.forEach(paint);if(active.size)requestAnimationFrame(loop);else running=false;}
+  function check(){visible.forEach(el=>{const r=el.getBoundingClientRect(),pad=el._ember?el._ember.size:0,inside=mx>=r.left-pad&&mx<=r.right+pad&&my>=r.top-pad&&my<=r.bottom+pad;
+    if(inside&&!el._ember)start(el);if(el._ember)el._ember.on=inside;});
+   if(active.size&&!running){running=true;requestAnimationFrame(loop);}}
+  document.addEventListener('pointermove',e=>{if(paused()||e.pointerType!=='mouse')return;mx=e.clientX;my=e.clientY;check();},{passive:true});
+  addEventListener('scroll',()=>{if(active.size)check();},{passive:true});
+  document.addEventListener('pointerleave',()=>{mx=my=-1e5;check();});
+ },700);
+ /* ---------- List focus (from the Particles services list): hover one item, the rest dim,
+    it slides in and an ember bar draws beneath it ---------- */
+ setTimeout(()=>{const groups=new Set();
+  $$('[data-name^="Tile/"],[data-name^="Card/"],.design-card,.why').forEach(el=>{if(el.parentElement&&el.parentElement.children.length>1)groups.add(el.parentElement);});
+  $$('#services [data-name="Accordion"]').forEach(g=>groups.add(g));
+  groups.forEach(g=>{if(g.closest('.mobile-view'))return;g.classList.add('bm-focus');[...g.children].forEach(it=>{if(getComputedStyle(it).position==='static')it.style.position='relative';const bar=document.createElement('i');bar.className='bm-focus-bar';bar.setAttribute('aria-hidden','true');it.append(bar);});});},600);
  /* ---------- Generic reveal for pages that have none ---------- */
  if(study==='hub'||/portfolio\.html$/.test(location.pathname)){
   const items=$$('.design-card,.gallery-heading,.portfolio-invite,.hub-hero h1,.hub-hero .eyebrow,.hero-bottom');items.forEach((el,i)=>{el.classList.add('bm-rise');el.style.setProperty('--d',(i%6)*70+'ms');});
-  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}),{threshold:.12});items.forEach(el=>io.observe(el));
+  const io=new IntersectionObserver(es=>es.forEach(e=>e.target.classList.toggle('in',e.isIntersecting)),{threshold:.12});items.forEach(el=>io.observe(el));
  }
 })();

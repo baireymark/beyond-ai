@@ -63,7 +63,7 @@
       const shade=index===4 ? .2+.8*illumination : 1-.85*illumination;
       const level=Math.max(1,Math.min(ramp.length-1,Math.round(Math.sqrt(density)*shade*(ramp.length-1))));
       const [heat,hx,hy]=trail?trail.heat(cx,cy,now):[0,0,0];
-      if(heat>.12){ctx.fillStyle=heat>.5?'#ff5a1f':'#c2400f';ctx.fillText(trail.glyph(cx,cy,now),cx+hx*heat*7,cy+hy*heat*7);ctx.fillStyle=data.color;}
+      if(heat>.12){ctx.fillStyle=heat>.5?'#ff5a1f':'#c2400f';ctx.fillText(trail.glyph(cx,cy,now,heat),cx,cy);ctx.fillStyle=data.color;}
       else ctx.fillText(ramp[level],cx,cy);
     }
     if(trail)trail.drawSparks(ctx,now);

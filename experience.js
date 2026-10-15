@@ -192,8 +192,8 @@
   byName(/^(Pillar\/|Pillar ·|Pillar )/).forEach((el,i)=>{el.classList.add('float-art');el.style.animationDelay=`${-i*1.2}s`;});
   byName(/Ticker \(marquee\)/).forEach(el=>{const c=[...el.children].find(c=>dims(c).w>900);if(c)c.classList.add('marquee-motion');});
   // Stagger visible editorial headings without hiding content when JavaScript fails.
-  const reveal=$$('h1,h2',root);reveal.forEach((el,i)=>{el.classList.add('motion-reveal');el.style.transitionDelay=`${(i%3)*60}ms`;});
-  const revealObserver=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('is-visible');revealObserver.unobserve(e.target);}}),{threshold:.08,rootMargin:'0px 0px 40px 0px'});
+  const reveal=$$('h1,h2,h3,p,img,[data-name^="Card/"],[data-name^="Tile/"]',root).filter(el=>!el.closest('#navigation,[data-name="Dither"],[data-name="Dither globe"],.motion-reveal')&&!el.querySelector('canvas'));reveal.forEach((el,i)=>{el.classList.add('motion-reveal');el.style.transitionDelay=`${(i%3)*60}ms`;});
+  const revealObserver=new IntersectionObserver(entries=>entries.forEach(e=>e.target.classList.toggle('is-visible',e.isIntersecting)),{threshold:.08,rootMargin:'0px 0px -6% 0px'});
   reveal.forEach(el=>revealObserver.observe(el));document.documentElement.classList.add('motion-ready');
   const animated=$$('.rotate-slow,.rotate-reverse,.float-art,.breathe-art,.terrain-drift,.wireframe-drift,.signal-pulse');
   const motionObserver=new IntersectionObserver(entries=>entries.forEach(e=>e.target.style.animationPlayState=e.isIntersecting?'running':'paused'),{rootMargin:'120px'});animated.forEach(el=>motionObserver.observe(el));
@@ -209,7 +209,7 @@
   function mobileView(){
     const mobile=document.createElement('div');mobile.className='mobile-view';
     const mark=$('img[src*="8daf3"]',root)||$('img',root);
-    const nav=document.createElement('header');nav.className='mobile-nav';nav.innerHTML=`<a href="#home" class="brand">${mark?`<img src="${mark.getAttribute('src')}" alt="">`:''}Beyond <span style="color:#ff5a1f">Ai</span></a><button aria-label="Open navigation">☰</button>`;nav.querySelector('button').addEventListener('click',()=>{show(`<div class="dialog-kicker">EXPLORE</div><h2 id="dialog-title">Beyond AI</h2><nav class="mobile-menu">${['services','products','work','education','contact'].filter(k=>$('#'+k)).map(k=>`<a href="#${k}">${k[0].toUpperCase()+k.slice(1)} ↗</a>`).join('')}</nav>`);$$('a',content).forEach(a=>a.addEventListener('click',()=>dialog.close()));});mobile.append(nav);
+    const nav=document.createElement('header');nav.className='mobile-nav';nav.innerHTML=`<a href="#home" class="brand">${mark?`<img src="${mark.getAttribute('src')}" alt="">`:''}Beyond<span style="color:#ff5a1f">Ai</span></a><button aria-label="Open navigation">☰</button>`;nav.querySelector('button').addEventListener('click',()=>{show(`<div class="dialog-kicker">EXPLORE</div><h2 id="dialog-title">Beyond AI</h2><nav class="mobile-menu">${['services','products','work','education','contact'].filter(k=>$('#'+k)).map(k=>`<a href="#${k}">${k[0].toUpperCase()+k.slice(1)} ↗</a>`).join('')}</nav>`);$$('a',content).forEach(a=>a.addEventListener('click',()=>dialog.close()));});mobile.append(nav);
     for(const section of sections){
       if(section.id.startsWith('navigation'))continue;
       const s=document.createElement('section');s.className='mobile-section';s.dataset.id=section.id;
