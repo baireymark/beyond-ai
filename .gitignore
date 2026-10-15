@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+dist/
+.vercel/
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets: never commit real SMTP credentials. .env.example documents the variables.
+.env
+.env*.local

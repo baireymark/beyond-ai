@@ -1,0 +1,114 @@
+/* V3: V1's wide canvas, V2's hero and movement, a new selected-work showcase. */
+[hidden]{display:none!important}
+.v3-hero{display:flex;flex-direction:column;justify-content:flex-end;min-height:max(640px,100svh);padding-top:120px;padding-bottom:32px}
+.v3-hero .hero-h{margin-top:22px}
+.v3-hero .center{margin:clamp(40px,10vh,120px) auto clamp(40px,8vh,90px);padding:0;width:min(520px,100%)}
+.v3-hero .sub{color:var(--mute)}
+.v3-hero .meta{flex-wrap:wrap}
+.v3-who .p-display{font-size:clamp(36px,5.3vw,80px);max-width:24ch}
+.v3-who .p-display .r{display:inline;text-align:left}
+.v3-who>.lede{margin:30px 0 40px;max-width:66ch}
+.v3-pillars{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.v3-pillars .card{padding:30px;min-width:0}
+.v3-pillars h3{font-size:24px;line-height:1.2;letter-spacing:-.025em;margin:30px 0 14px}
+.v3-pillars p{margin:0;color:var(--mute)}
+.v3-who .actions{gap:32px}
+.card,.work-card,.project-visual{position:relative;--mx:50%;--my:35%}
+.work-grid[hidden]{display:none}
+.card::after,.project-visual::after{content:'';position:absolute;inset:0;background:radial-gradient(420px circle at var(--mx) var(--my),rgba(255,130,70,.12),transparent 65%);opacity:0;pointer-events:none;transition:opacity .4s}
+.card:hover::after,.project-visual:hover::after{opacity:1}
+.v3-work .work-intro{display:grid;grid-template-columns:1.5fr 1fr;gap:40px;align-items:end;margin:34px 0 56px}
+.v3-work .p-display{font-size:clamp(40px,6.4vw,96px)}
+.v3-work .p-display .r{text-align:left}
+.work-intro .lede{max-width:34ch;margin:0 0 6px;justify-self:end}
+.showcase{border-top:1px solid var(--line2)}
+.showcase-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px 0}
+.showcase-toolbar>p{margin:0;display:flex;gap:18px}
+.showcase-filters{display:flex;gap:4px;padding:4px;border:1px solid var(--line2);border-radius:999px}
+.showcase-filters button,.portfolio-types button{border:0;background:none;border-radius:999px;padding:12px 20px;min-height:44px;color:var(--mute);font-size:14px;transition:background .3s,color .3s}
+.showcase-filters button span{font:11px var(--mono);margin-left:12px;opacity:.65}
+.showcase-filters button[aria-pressed=true],.portfolio-types button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+.showcase-body{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);border:1px solid var(--line2);border-radius:18px;overflow:hidden}
+.showcase-stage{min-width:0;background:#110e0c}
+.project-panel[hidden],.project-choice[hidden]{display:none}
+.project-panel{animation:project-in .65s var(--ease)}
+.project-visual{height:480px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 65%,#542914 0%,#211810 40%,#110e0c 75%);perspective:1100px}
+.project-halo{position:absolute;width:440px;height:440px;border:1px solid #b1764c26;border-radius:50%;box-shadow:0 0 0 50px #b1764c09,0 0 0 100px #b1764c06;pointer-events:none}
+.project-watermark{position:absolute;bottom:24px;left:24px;right:24px;text-align:center;font:500 clamp(26px,3.4vw,58px)/1 var(--display);letter-spacing:-.04em;color:#ffc99a13;white-space:nowrap}
+.project-device{display:block;position:relative;z-index:1;transition:transform .8s var(--ease);transform:rotate(-7deg);filter:drop-shadow(15px 30px 26px #0009)}
+.app .project-device{height:370px;max-width:75%;border-radius:30px;overflow:hidden;border:5px solid #26201b;background:#26201b;box-shadow:0 0 0 1px #b9a49155}
+.app .project-device img{height:100%;width:auto;max-width:100%;object-fit:contain}
+.website .project-device{width:84%;transform:rotate(-3deg);border-radius:10px;border:1px solid #b9a49155;border-top:22px solid #30251f;overflow:hidden}
+.website .project-device::before{content:'•••';position:absolute;left:10px;top:-23px;color:#978879;letter-spacing:3px}
+.website .project-device img{width:100%;height:280px;object-fit:cover;object-position:top}
+.project-visual:hover .project-device,.project-visual:focus-visible .project-device{transform:rotate(0deg) translateY(-8px) rotateX(var(--pitch,0deg)) rotateY(var(--yaw,0deg)) scale(1.035)}
+.project-open{position:absolute;right:24px;top:24px;width:44px;height:44px;border:1px solid var(--line2);border-radius:50%;display:grid;place-items:center;font-size:24px;transition:background .3s,color .3s}
+.project-visual:hover .project-open{background:var(--ink);color:var(--bg)}
+.project-caption{display:flex;justify-content:space-between;align-items:end;gap:16px;padding:26px 30px;background:var(--bg2);border-top:1px solid var(--line)}
+.project-caption p{margin:0 0 10px;font-size:10px}
+.project-caption h3{font:500 clamp(24px,2.5vw,36px)/1.1 var(--sans);letter-spacing:-.03em;margin:0}
+.project-caption .text-link{font-size:13px;white-space:nowrap}
+.project-index{display:flex;flex-direction:column;padding:12px 28px;border-left:1px solid var(--line2);background:var(--bg)}
+.project-choice{width:100%;display:flex;text-align:left;align-items:center;gap:20px;min-height:100px;padding:20px 4px;border:0;border-bottom:1px solid var(--line2);background:none;transition:color .3s,padding .4s;color:var(--mute)}
+.project-choice[aria-pressed=true]{color:var(--ink);padding-left:12px}
+.project-choice[aria-pressed=true] .project-number,.project-choice[aria-pressed=true] .project-arrow{color:var(--ember)}
+.project-choice[aria-pressed=true] .project-arrow{transform:rotate(45deg)}
+.project-label{display:grid;gap:6px;flex:1;min-width:0}
+.project-label strong{font-size:clamp(18px,1.65vw,24px);font-weight:500;letter-spacing:-.025em}
+.project-label small{font-size:12px;color:var(--dim)}
+.project-arrow{font-size:24px;transition:transform .4s;color:var(--faint)}
+.project-index-foot{margin-top:auto;padding:26px 4px;display:grid;gap:24px}
+.project-index-foot .text-link{justify-self:start;font-size:14px}
+.p-foot,.p-foot .wordmark,.p-foot .bn{text-transform:uppercase}
+.p-foot{padding-bottom:calc(clamp(24px,3vw,48px) + env(safe-area-inset-bottom))}
+.p-foot .foot-brand>p{font-size:14px;letter-spacing:.03em}
+.p-foot .foot-col li,.p-foot address,.p-foot .foot-bottom{font-size:12px;letter-spacing:.035em}
+.portfolio-types{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 30px}
+.portfolio-types button{border:1px solid var(--line2)}
+.cursor{position:fixed;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border:1px solid rgba(244,241,236,.45);border-radius:50%;pointer-events:none;z-index:1000;opacity:0;transition:opacity .3s,border-color .3s,width .3s,height .3s,margin .3s}
+.cursor.on{opacity:1}
+.cursor.over{width:52px;height:52px;margin:-26px 0 0 -26px;border-color:var(--ember)}
+@keyframes project-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media(max-width:1000px){
+ .showcase-body{grid-template-columns:minmax(0,1.4fr) minmax(240px,1fr)}
+ .project-index{padding:8px 18px}.project-choice{gap:14px}
+ .project-visual{height:420px}.app .project-device{height:330px}
+ .v3-work .work-intro{grid-template-columns:1fr}.work-intro .lede{justify-self:start;max-width:50ch}
+}
+@media(max-width:700px){
+ .v3-hero{min-height:100svh;padding-top:110px}.v3-hero .center{margin:48px auto}.v3-hero .meta{font-size:9px;gap:12px}
+ .hero-tag{font-size:9px;letter-spacing:.08em}
+ .v3-pillars{grid-template-columns:1fr}.v3-pillars h3{margin-top:20px}
+ .v3-who .actions{gap:10px 24px}
+ .showcase-body{grid-template-columns:1fr}.project-index{border-left:0;border-top:1px solid var(--line2)}
+ .showcase-toolbar{align-items:flex-start;flex-direction:column;gap:16px}
+ .showcase-filters{width:100%}.showcase-filters button{flex:1}
+ .project-visual{height:360px}.app .project-device{height:290px}
+ .project-caption{padding:22px}.project-caption p{font-size:9px}
+ .project-choice{min-height:78px}.project-index-foot{gap:10px;padding:20px 4px}.project-index-foot>.p-mono{display:none}
+ .website .project-device img{height:190px}.project-watermark{font-size:30px}
+ .v3-work .work-intro{margin-bottom:32px;gap:24px}
+}
+@media(max-height:500px) and (orientation:landscape){.v3-hero{min-height:0}.v3-hero .center{margin:24px auto}.v3-hero .meta{display:flex}}
+@media(prefers-reduced-motion:reduce){.cursor{display:none}.project-panel{animation:none}.project-device{transition:none}.project-visual:hover .project-device{transform:none}}
+@media(forced-colors:active){.project-halo,.project-watermark,.cursor{display:none}.project-choice[aria-pressed=true],.showcase-filters button[aria-pressed=true]{outline:2px solid Highlight}}
+
+/* V2 leadership: portrait cards, compact biographies and governance grid. */
+.leadership-wrap,.leadership-v2 .page-hero-in{width:100%;max-width:1320px;margin:0 auto;padding:0 clamp(18px,4vw,56px)}
+.leadership-v2 .page-hero{min-height:0;padding:clamp(130px,18vh,180px) 0 clamp(56px,8vh,90px);border-bottom:1px solid var(--line)}
+.leadership-v2 .page-hero .p-display{font-size:clamp(38px,7vw,104px)}
+.leadership-v2 .page-hero .p-display .r{display:inline;text-align:left}
+.leadership-v2 .page-hero .lede{max-width:62ch;color:var(--mute)}
+.leadership-section{padding:clamp(64px,10vw,120px) 0;border-top:1px solid var(--line)}
+.leadership-heading{font:500 clamp(32px,5vw,64px)/1 var(--display);letter-spacing:-.04em;text-transform:uppercase;margin:26px 0 clamp(36px,5vw,64px);color:var(--ink2)}
+.leadership-people{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:16px}
+.leadership-person{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg2)}
+.leadership-photo{aspect-ratio:4/5;background:#16110f;overflow:hidden}
+.leadership-photo img{width:100%;height:100%;object-fit:cover;filter:grayscale(.2)}
+.leadership-bio{padding:18px 20px 22px}
+.leadership-bio h3{font:500 19px/1.25 var(--sans);margin:0 0 4px;text-wrap:initial}
+.leadership-role{margin:0;font:500 11px/1.5 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ember)}
+.leadership-description{font:400 14px/1.6 var(--sans);color:var(--mute);margin:10px 0 0}
+.leadership-principles{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))}
+.leadership-principles h3{font:500 22px/1.2 var(--sans);letter-spacing:-.025em;margin:0 0 12px}
+.leadership-principles p{font-size:15px;line-height:1.6;color:var(--mute);margin:0}

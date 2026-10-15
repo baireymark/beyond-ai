@@ -1,1 +1,1 @@
-{"version":"0.0.1","configurations":[{"name":"beyond-static","runtimeExecutable":"node","runtimeArgs":["C:/Users/ADMIN/AppData/Local/Temp/claude/C--Users-ADMIN-Documents-aerlmrtn-repositories-beyond-ai/b9829b25-d368-4ebe-bfa1-305715de2960/scratchpad/serve.js","C:/Users/ADMIN/Documents/aerlmrtn/repositories/beyond-ai"],"port":5179}]}
+{"version":"0.0.1","configurations":[{"name":"beyond-dev","runtimeExecutable":"npm","runtimeArgs":["run","dev"],"port":5193}]}

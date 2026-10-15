@@ -1,53 +1,98 @@
-BEYOND AI — EIGHT INTERACTIVE DESIGN STUDIES
+# BeyondAi website
 
-Open index.html for the design hub. All HTML, CSS, JavaScript, artwork, and fonts
-are local; no installation or build is required. Keep this folder together.
+The beyondai.ph marketing site, built with Next.js (App Router) and TypeScript. Every page is prerendered
+as static HTML at build time and served from the CDN. The one server-side feature is the contact form,
+which sends enquiries by email through Gmail / Google Workspace SMTP.
 
-From the repository, an optional local preview is available with:
-  node scripts/serve-beyond.mjs
-Then open http://127.0.0.1:4175
+## Run
 
-PAGES
-  index.html              Main hub, live previews, filters, resume last design
-  bold-tech.html          V1 Bold Tech / Study B
-  moodboard.html          V2 Moodboard
-  particles.html          Landing E / Particles Light (Boon)
-  clear-plan.html         Landing B / Clear Plan Refined
-  big-ideas.html          Landing D2 / Big Ideas, Real Systems
-  work-rewired.html       Landing D4 / Work, Rewired
-  connected-terrain.html  Landing D1 / Connected Terrain
-  systems.html           Landing A / Systems Refined
-  portfolio.html         Searchable collection of 22 apps and 10 websites
+Requires Node.js 20.9 or newer.
 
-INTERACTIONS
-Use the bottom switcher to move between designs, return to the hub, or pause
-motion. Product cards open previews; Big Ideas also has an in-page tabbed
-product explorer. Navigation and menus jump to sections. FAQ answers expand
-and collapse. Portfolio cards show original images and link to their app store
-or website. App/website filters change the portfolio view.
+```sh
+npm install
+cp .env.example .env.local   # then fill in the SMTP values (see "Contact form email" below)
+npm run dev
+```
 
-Project forms prepare a local brief. Download it or open an email draft in
-your email app. No form data is sent to a server, and no message is sent
-automatically. Product interfaces and service content are interactive previews,
-not connections to live Beyond AI business systems.
+Open **http://localhost:5193**. On Windows, use `npm.cmd` if PowerShell blocks `npm.ps1`.
 
-The desktop compositions follow the selected Figma frames. Narrow screens
-use a readable single-column layout. Reduced-motion preferences are respected.
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Development server with hot reload on port 5193. |
+| `npm run build` | Production build. Prerenders every page and type-checks. |
+| `npm start` | Serves the production build on port 5193. |
+| `npm run lint` | ESLint (Next.js core-web-vitals and TypeScript rules). |
+| `npm run typecheck` | TypeScript only. |
+| `npm run check` | Release checks against a running server (`npm run build && npm start` first): metadata, headings, images, links, anchors, ARIA references, every legacy redirect, the 404 page and response headers. Add `-- --external` to also request every external link, or `-- --base=https://…` to check a deployment. |
 
-SOURCES
-Figma: https://www.figma.com/design/WEWtTZn0EUeSv05ENy31Qf/Beyond-AI?node-id=26-742
-Portfolio images and destination links: https://beyondai.ph/ (14 October 2026).
-Per-image source records are saved in portfolio/sources.json. The source site
-labels Dermexia as sendagift; the displayed name here follows its image and URL.
-Fonts: Geist, Geist Mono, Archivo, IBM Plex Mono (Google Fonts); Montserrat
-from the existing project. Reference ZIP archives were used as reference only.
+## Project layout
 
-EDITING
-The pages are plain HTML. design.css contains the captured design styles;
-experience.css and experience.js implement the shared motion and interactions.
-hub.* and portfolio.* control the two collection pages. No React or Tailwind
-runtime is required for the delivered HTML.
+```
+src/
+  app/                 Routes (App Router). One folder per URL; [slug] folders are generated from content.
+    layout.tsx         <html>, fonts, navigation, footer, page-level effects, chat widget
+    contact/actions.ts Server action for the contact form
+    sitemap.ts, robots.ts
+  components/          UI. Files starting with 'use client' run in the browser; everything else renders on the server only.
+  content/             Site copy and data: products, services, portfolio, leadership, education, contact options
+  lib/                 motion.ts (canvas animation loop), seo.ts (metadata), enquiry.ts (form rules),
+                       mailer.ts + rate-limit.ts (server only)
+  styles/              site.css (design system), v3.css (V3 additions), via.css (chat widget)
+  fonts/               Self-hosted fonts, loaded through next/font (licenses in public/licenses)
+public/                Images, icons, manifest, the prebuilt chat widget (js/via.js) and font licenses
+config/redirects.json  Legacy URLs → current URLs (301). Used by next.config.ts and the release checks.
+next.config.ts         Redirects, security headers, cache headers, image settings
+```
 
-Moodboard update: the hero is a live ASCII globe with surface rotation, drag/arrow-key control, and pause support. Switzerland, Dhaka and Manila markers follow geographic coordinates and hide on the far side. The Switzerland marker uses Zurich as the country reference point.
+To edit copy, change the files in `src/content/` or the page in `src/app/`. To add a product or service, add an
+entry in `src/content/products.ts` or `services.ts`: its page, navigation, footer link and sitemap entry follow.
 
-Moodboard ASCII update: all five supporting illustrations render as actual ASCII characters on a fixed grid. Symbols change from light punctuation to dense characters to animate light and shade. Pointer movement acts as a light source. Character positions, font size and opacity stay fixed. Mobile includes all five illustrations. Animations pause with the shared control and respect reduced-motion settings.
+## Rendering
+
+| Route | Rendering |
+| --- | --- |
+| All pages, including `/products/[slug]` and `/services/[slug]` | Static, prerendered at build time. Unknown slugs return 404. |
+| Contact form submission | Server action, run on demand when the form is posted. |
+| `/sitemap.xml`, `/robots.txt` | Static, generated at build time. |
+
+Content lives in the repository, so a deploy is the publishing step and ISR isn't needed. If content moves to a CMS,
+add `export const revalidate = <seconds>` to the affected pages, or revalidate on publish.
+
+## Contact form email
+
+The form posts to a server action (`src/app/contact/actions.ts`) that validates the enquiry and sends it with
+nodemailer through Gmail SMTP. The visitor's address is set as Reply-To, so replying in Gmail answers them directly.
+
+1. Use a Google account with 2-Step Verification enabled (a Google Workspace address such as `website@beyondai.ph`
+   is best).
+2. Create an App Password: Google Account → Security → 2-Step Verification → App passwords.
+3. Set the variables in `.env.local` for development, and in Vercel → Project → Settings → Environment Variables:
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `SMTP_USER` | yes | The sending Gmail / Workspace address. Gmail sends only as this account or a verified alias. |
+| `SMTP_PASS` | yes | The App Password (not the account password). |
+| `CONTACT_TO_EMAIL` | no | Where enquiries go. Defaults to the published contact address. |
+| `SMTP_HOST`, `SMTP_PORT` | no | Default `smtp.gmail.com` and `465` (TLS). Use `587` for STARTTLS. |
+
+If the variables are missing or Gmail rejects the login, the visitor sees "Sorry, your enquiry could not be sent.
+Please email us at …" and keeps what they typed; the server log names the cause. Gmail sends up to about
+500 messages a day from a personal account and 2,000 from Workspace.
+
+Spam protection: a hidden honeypot field and a per-instance limit of 5 enquiries per 10 minutes per IP address.
+If spam becomes a problem, add Cloudflare Turnstile or a shared rate limit (for example Upstash Redis).
+
+## Deployment (Vercel)
+
+Vercel detects Next.js automatically. In Project → Settings → Build and Deployment, the Framework Preset must be
+**Next.js** with no custom build command or output directory (the previous static build used `dist/`, which
+must be cleared). Add the SMTP environment variables, then deploy. Redirects and headers come from `next.config.ts`.
+
+## Behavior notes
+
+- Motion respects reduced-motion preferences. Content and links work without JavaScript, and so does the
+  contact form (the server action handles a normal form post).
+- Pages are static, so the Content Security Policy allows inline scripts and styles, which Next.js uses to
+  boot static pages. Everything else stays restricted to the site's own origin.
+- The chat assistant (`public/js/via.js`) is a prebuilt script that runs entirely in the browser and makes no
+  network requests. It loads after the page is idle.
