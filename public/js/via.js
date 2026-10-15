@@ -41,14 +41,26 @@
     if (!phrase) return text;
     return ` ${text} `.split(` ${phrase} `).join(` ${replacement} `).trim().replace(/\s+/g, " ");
   }
+  var compiledSynonyms = /* @__PURE__ */ new WeakMap();
+  function compileSynonyms(synonyms) {
+    let pairs = compiledSynonyms.get(synonyms);
+    if (!pairs) {
+      pairs = [];
+      for (const { variants, canonical } of synonyms) {
+        const target = normalize(canonical);
+        for (const variant of variants) {
+          const v = normalize(variant);
+          if (v && v !== target) pairs.push([v, target]);
+        }
+      }
+      compiledSynonyms.set(synonyms, pairs);
+    }
+    return pairs;
+  }
   function applySynonyms(text, synonyms) {
     let out = text;
-    for (const { variants, canonical } of synonyms) {
-      const target = normalize(canonical);
-      for (const variant of variants) {
-        const v = normalize(variant);
-        if (v && v !== target) out = replacePhrase(out, v, target);
-      }
+    for (const [v, target] of compileSynonyms(synonyms)) {
+      if (out.includes(v)) out = replacePhrase(out, v, target);
     }
     return out;
   }
@@ -10137,7 +10149,9 @@ Please get in touch.
   function start() {
     var _a, _b, _c;
     const config = window.VIA_CONFIG || {};
-    const bot = createVia();
+    let instance = null;
+    const getBot = () => instance || (instance = createVia());
+    const bot = { name: "Via", reply: (text) => getBot().reply(text), revive: () => getBot().revive(), reset: () => getBot().reset() };
     window.via = mountWidget({
       bot,
       title: "Via",
@@ -10150,6 +10164,11 @@ Please get in touch.
       launcherLabel: "Chat with Via",
       colorScheme: (_c = config.colorScheme) != null ? _c : "auto"
     });
+    const launcher = document.querySelector(".lz-root .lz-launcher");
+    const warm = () => {
+      if (!instance) (window.requestIdleCallback || setTimeout)(() => getBot());
+    };
+    if (launcher) for (const type of ["pointerenter", "focus", "click"]) launcher.addEventListener(type, warm, { once: true });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();

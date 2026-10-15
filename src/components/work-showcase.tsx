@@ -44,7 +44,7 @@ export function WorkShowcase({ featured, counts }: { featured: FeaturedProject[]
               <article key={p.img} className={`project-panel ${p.type}`} id={`project-${p.img}`} data-project-panel={p.img} aria-labelledby={`project-title-${p.img}`} hidden={p.img !== selected}>
                 <a className="project-visual" href={p.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${p.name} ${app ? 'store listing' : 'website'} (opens in a new tab)`}>
                   <span className="project-halo" aria-hidden="true" />
-                  <span className="project-watermark" aria-hidden="true">{app ? 'IN YOUR HANDS.' : 'ON YOUR SCREEN.'}</span>
+                  <span className="project-watermark" aria-hidden="true" data-text={app ? 'IN YOUR HANDS.' : 'ON YOUR SCREEN.'} />
                   <span className="project-device">
                     <Image
                       src={`/img/portfolio/${p.img}-${app ? '560' : '1200'}.webp`}

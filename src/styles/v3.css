@@ -26,7 +26,7 @@
 .showcase-toolbar>p{margin:0;display:flex;gap:18px}
 .showcase-filters{display:flex;gap:4px;padding:4px;border:1px solid var(--line2);border-radius:999px}
 .showcase-filters button,.portfolio-types button{border:0;background:none;border-radius:999px;padding:12px 20px;min-height:44px;color:var(--mute);font-size:14px;transition:background .3s,color .3s}
-.showcase-filters button span{font:11px var(--mono);margin-left:12px;opacity:.65}
+.showcase-filters button span{font:11px var(--mono);margin-left:12px;opacity:.75}
 .showcase-filters button[aria-pressed=true],.portfolio-types button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
 .showcase-body{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);border:1px solid var(--line2);border-radius:18px;overflow:hidden}
 .showcase-stage{min-width:0;background:#110e0c}
@@ -35,6 +35,8 @@
 .project-visual{height:480px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 65%,#542914 0%,#211810 40%,#110e0c 75%);perspective:1100px}
 .project-halo{position:absolute;width:440px;height:440px;border:1px solid #b1764c26;border-radius:50%;box-shadow:0 0 0 50px #b1764c09,0 0 0 100px #b1764c06;pointer-events:none}
 .project-watermark{position:absolute;bottom:24px;left:24px;right:24px;text-align:center;font:500 clamp(26px,3.4vw,58px)/1 var(--display);letter-spacing:-.04em;color:#ffc99a13;white-space:nowrap}
+/* Generated content, not text: the link is named by its aria-label, and visible text inside it would have to be part of that name. */
+.project-watermark::before{content:attr(data-text)}
 .project-device{display:block;position:relative;z-index:1;transition:transform .8s var(--ease);transform:rotate(-7deg);filter:drop-shadow(15px 30px 26px #0009)}
 .app .project-device{height:370px;max-width:75%;border-radius:30px;overflow:hidden;border:5px solid #26201b;background:#26201b;box-shadow:0 0 0 1px #b9a49155}
 .app .project-device img{height:100%;width:auto;max-width:100%;object-fit:contain}
