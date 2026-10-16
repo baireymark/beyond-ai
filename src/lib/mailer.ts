@@ -1,8 +1,9 @@
-// Sends contact enquiries through Gmail / Google Workspace SMTP. Server-only: credentials never reach the browser.
+// Fallback delivery for contact enquiries through Gmail / Google Workspace SMTP, used only when the BeyondAi Admin
+// enquiry API fails. Server-only: credentials never reach the browser.
 import 'server-only';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { site } from '@/content/site';
-import { enquiryLines, topicLabel, type Enquiry } from '@/lib/enquiry';
+import { enquiryLines, topicLabel, type LeadPayload } from '@/lib/enquiry';
 
 let transporter: Transporter | undefined;
 
@@ -28,15 +29,15 @@ function smtp() {
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export async function sendEnquiryEmail(e: Enquiry): Promise<void> {
+export async function sendEnquiryEmail(e: LeadPayload): Promise<void> {
   const { transporter, user } = smtp();
   const lines = enquiryLines(e);
   await transporter.sendMail({
     // Gmail only sends as the signed-in account (or a verified alias); the visitor goes in Reply-To.
     from: { name: `${site.brand} website`, address: user },
     to: process.env.CONTACT_TO_EMAIL?.trim() || site.email,
-    replyTo: { name: e.name, address: e.email },
-    subject: `${topicLabel(e.topic)} — ${e.name}`,
+    replyTo: { name: e.fullName, address: e.workEmail },
+    subject: `${topicLabel(e.topic)} — ${e.fullName} (API fallback)`,
     text: lines.join('\n'),
     html: `<div style="font:15px/1.5 system-ui,sans-serif">${lines.map(l => (l ? `<p style="margin:0 0 4px;white-space:pre-wrap">${escapeHtml(l)}</p>` : '<br>')).join('')}</div>`,
   });

@@ -67,7 +67,7 @@ export default function AboutPage() {
         <div><Tag>Where we are</Tag><h2 className="sec-h" id="loc-h">Clark, Philippines.</h2></div>
         <div className="prose">
           <p><Brand /> is based in Clark, in Central Luzon. We work with organizations in Metro Manila, across the Philippines and internationally, and schedule meetings in Philippine Standard Time (UTC+8, Asia/Manila).</p>
-          <p>Our Director of Philippines Relations works with government, business and institutional partners across the country. <Link href="/board-of-directors">Meet the leadership →</Link></p>
+          <p>Our leadership team works with government, business and institutional partners across the country. <Link href="/board-of-directors">Meet the leadership →</Link></p>
         </div>
       </section>
       <ProcessSection />

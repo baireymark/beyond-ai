@@ -1,6 +1,7 @@
 // Via — BeyondAi's on-site chat assistant. Runs entirely in the browser (no network calls).
 // Styles live in css/via.css (the site CSP blocks injected <style> tags).
-// Optional settings: set window.VIA_CONFIG = { showMood, startOpen, colorScheme } before this script loads.
+// Optional settings: set window.VIA_CONFIG = { showMood, startOpen, colorScheme, memory, memoryKey } before this script loads.
+// Memory: a small conversation memory is kept in localStorage for 7 days; "Start new chat" clears it.
 (() => {
   // src/text.js
   var CONTRACTIONS = [
@@ -28,7 +29,11 @@
     return text.replace(/'s\b/g, "").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
   }
   function splitSentences(paragraph) {
-    return String(paragraph).replace(/([.!?;]+)(\s+|$)/g, "$1\n").replace(/(?:,\s*|\s+)(?:and also|and another thing|on top of that)\s+|,\s*(?:also|plus),?\s+/gi, "\n").replace(/(?:,\s*|,?\s+(?:and|but|so)\s+)(?=(?:honestly\s+|really\s+|now\s+)?(?:i|i'm|im|i've|we|we're|my|our)\b)/gi, "\n").split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    // Separate independent questions even when visitors omit punctuation.
+    return String(paragraph)
+      .replace(/\s+(and|but|also)\s+(?=(?:i (?:want|need|think|believe|hope|prefer|remember|feel|am|have|cannot|can not|do not)|we (?:want|need|have)|my (?:name|friend|wife|husband)|can you|could you|would you)\b)/gi, "\n")
+      .replace(/\b(i|we)\s+(want|need|hope|prefer)\s+([^.!?;\n]+?)\s+and\s+(?=(?:want|need|hope|prefer)\b)/gi, "$1 $2 $3\n$1 ")
+      .replace(/\s+(?:and|also)\s+(?=(?:what|how|why|where|when|who|can you|do you|does it|is it)\b)/gi, "\n").replace(/([.!?;]+)(\s+|$)/g, "$1\n").replace(/(?:,\s*|\s+)(?:and also|and another thing|on top of that)\s+|,\s*(?:also|plus),?\s+/gi, "\n").replace(/(?:,\s*|,?\s+(?:and|but|so)\s+)(?=(?:honestly\s+|really\s+|now\s+)?(?:i|i'm|im|i've|we|we're|my|our)\b)/gi, "\n").split(/\n+/).map((s) => s.trim()).filter(Boolean);
   }
   function containsPhrase(text, phrase) {
     return phrase !== "" && ` ${text} `.includes(` ${phrase} `);
@@ -41,26 +46,14 @@
     if (!phrase) return text;
     return ` ${text} `.split(` ${phrase} `).join(` ${replacement} `).trim().replace(/\s+/g, " ");
   }
-  var compiledSynonyms = /* @__PURE__ */ new WeakMap();
-  function compileSynonyms(synonyms) {
-    let pairs = compiledSynonyms.get(synonyms);
-    if (!pairs) {
-      pairs = [];
-      for (const { variants, canonical } of synonyms) {
-        const target = normalize(canonical);
-        for (const variant of variants) {
-          const v = normalize(variant);
-          if (v && v !== target) pairs.push([v, target]);
-        }
-      }
-      compiledSynonyms.set(synonyms, pairs);
-    }
-    return pairs;
-  }
   function applySynonyms(text, synonyms) {
     let out = text;
-    for (const [v, target] of compileSynonyms(synonyms)) {
-      if (out.includes(v)) out = replacePhrase(out, v, target);
+    for (const { variants, canonical } of synonyms) {
+      const target = normalize(canonical);
+      for (const variant of variants) {
+        const v = normalize(variant);
+        if (v && v !== target) out = replacePhrase(out, v, target);
+      }
     }
     return out;
   }
@@ -71,7 +64,17 @@
     for (let i = 0; i < words.length; ) {
       const rule = rules.find((r) => r.words.every((w, k) => words[i + k] === w));
       if (rule) {
-        out.push(rule.to);
+        // "You" can be a subject or an object. A fixed "you -> me" rule
+        // produced "me understand you" and "you think me care".
+        let replacement = rule.to;
+        if (rule.words.length === 1 && rule.words[0] === "you" && rule.to === "me") {
+          const before = words[i - 1] || "";
+          const after = words[i + 1] || "";
+          const subjectVerb = /^(?:am|are|were|have|had|do|did|can|could|will|would|should|might|must|never|always|still|really|understand|care|listen|make|mean|know|think|feel|want|need|help|seem|look|sound|said|told|keep|believe|remember|support|ignored|understood|made|helped|hurt|hate|love)$/;
+          const afterPreposition = /^(?:to|for|with|from|about|at|of|beside|behind|between|without|against|toward|towards)$/;
+          replacement = !afterPreposition.test(before) && (i === 0 || subjectVerb.test(after) || /^(?:that|because|if|when|whether|while|and|but|think|thought|hope|wish|know|feel)$/.test(before)) ? "I" : "me";
+        }
+        out.push(replacement);
         i += rule.words.length;
       } else {
         out.push(words[i]);
@@ -568,6 +571,7 @@
   var SMALL_TALK_DAMPING = 0.4;
   var CASUAL_SINGLE_WORD_MAX = 4;
   var SHORT_MESSAGE_WORDS = 3;
+  const knowledgeKeyCache = new WeakMap();
   function rankKnowledge(text, entries, context = /* @__PURE__ */ new Set()) {
     const words = text.split(" ").filter(Boolean);
     const ranked = [];
@@ -575,8 +579,9 @@
       if (entry.requires && !entry.requires.some((r) => containsPhrase(text, normalize(r)) || context.has(normalize(r)))) continue;
       let score = 0;
       let exact = false;
-      for (const rawKey of entry.keys) {
-        const key = normalize(rawKey);
+      let keys = knowledgeKeyCache.get(entry);
+      if (!keys) { keys = entry.keys.map(normalize); knowledgeKeyCache.set(entry, keys); }
+      for (const key of keys) {
         if (!key) continue;
         if (!key.includes(" ") && containsPhrase(text, `my ${key}`)) continue;
         if (entry.casual && !key.includes(" ") && words.length > CASUAL_SINGLE_WORD_MAX) continue;
@@ -597,7 +602,11 @@
       }
       if (!exact) score = Math.min(score, 1);
       if (entry.smallTalk && words.length > SMALL_TALK_LONG_MESSAGE_WORDS) score *= SMALL_TALK_DAMPING;
-      if (score >= MIN_KNOWLEDGE_SCORE) ranked.push({ entry, score });
+      if (score >= MIN_KNOWLEDGE_SCORE) {
+        if (entry.engine && entry.overview) score = MIN_KNOWLEDGE_SCORE;
+        else if (entry.engine) score += 4;
+        ranked.push({ entry, score });
+      }
     }
     return ranked.sort((a, b) => b.score - a.score);
   }
@@ -622,6 +631,75 @@
     const phrase = text.slice(at + best.keyword.length).trim();
     return { entry: best.entry, keyword: best.keyword, phrase };
   }
+  // query.js reference workflow: collect targets, resolve overlapping phrases,
+  // preserve their input order, and bind each phrase to its own response slot.
+  function extractPhraseTargets(text, entries, names) {
+    const candidates = [];
+    for (const entry of entries) for (const raw of entry.keywords) {
+      const keyword = resolveKeyword(raw, names);
+      if (!keyword.includes(" ")) continue;
+      let from = 0;
+      while (from < text.length) {
+        const at = text.indexOf(keyword, from);
+        if (at < 0) break;
+        const end = at + keyword.length;
+        if ((at === 0 || text[at - 1] === " ") && (end === text.length || text[end] === " ")) candidates.push({entry, keyword, start: at, end});
+        from = end;
+      }
+    }
+    // Specific phrases own their span. A shorter contained key cannot consume it.
+    candidates.sort((a, b) => (b.end - b.start) - (a.end - a.start) || Number(Boolean(b.entry.priority)) - Number(Boolean(a.entry.priority)) || a.start - b.start);
+    const targets = [];
+    for (const candidate of candidates) if (!targets.some(t => candidate.start < t.end && candidate.end > t.start)) targets.push(candidate);
+    targets.sort((a, b) => a.start - b.start);
+    return targets.map((t, i) => ({...t, phrase: text.slice(t.end, targets[i + 1]?.start ?? text.length).trim()}));
+  }
+  function planPhrases(original, entries, names) {
+    const text = normalize(original);
+    const targets = extractPhraseTargets(text, [...entries, {keywords: ["i want", "i need", "i hope", "i believe", "i think", "i feel", "i am", "i have", "i remember", "i cannot", "i can not", "i do not", "we want", "we need"]}], names);
+    if (targets.length < 2) return [original];
+    const boundaries = [];
+    let previous = targets[0];
+    for (const target of targets.slice(1)) {
+      const payload = text.slice(previous.end, target.start).trim();
+      // Independent subject/predicate phrases can be unpunctuated. Keep nested
+      // thoughts and their causes intact: "I think I need...", "because I...".
+      if (/^(?:i|we|you) (?:want|need|think|believe|feel|am|have|cannot|can not|do not|remember|hope|would like)\b/.test(target.keyword)
+          && payload.split(/\s+/).filter(Boolean).length >= 2
+          && !/\b(?:because|that|if|when|unless|whether|said|say|told|ask|asked)\s*$/.test(payload)) {
+        boundaries.push(target.start);
+        previous = target;
+      }
+    }
+    if (!boundaries.length) return [original];
+    // Map normalized word positions back to original spans; keep names, casing
+    // and punctuation for display, memory and the existing emotion detector.
+    const words = [...original.matchAll(/[\p{L}\p{N}]+(?:['’][\p{L}]+)*/gu)];
+    const spans = [];
+    for (const word of words) for (const token of normalize(word[0]).split(" ").filter(Boolean)) spans.push({token, start: word.index});
+    if (spans.map(w => w.token).join(" ") !== text) return [original];
+    const cuts = boundaries.map(at => spans[text.slice(0, at).trim().split(" ").filter(Boolean).length]?.start).filter(at => at > 0);
+    const chunks = [];
+    let start = 0;
+    for (const end of [...new Set(cuts), original.length]) {
+      const chunk = original.slice(start, end).replace(/(?:,?\s+(?:and|but|also))\s*$/i, "").trim();
+      if (chunk) chunks.push(chunk);
+      start = end;
+    }
+    return chunks;
+  }
+  function splitConversationParts(original) {
+    // Split independent clauses without breaking quoted speech or lists of nouns.
+    const candidates = [...original.matchAll(/(?:;\s*|,\s*|\s+(?:and|but|also)\s+)(?=(?:(?:oh|anyway|also)\s+)?(?:i|we|my|our)\b|(?:what|how|where|when|why|can you|do you|have you|have u|do like|do u)\b)/gi)];
+    const cuts = candidates.filter(match => {
+      const before = original.slice(0, match.index);
+      return (before.match(/"/g) || []).length % 2 === 0 && (before.match(/“/g) || []).length === (before.match(/”/g) || []).length;
+    });
+    const parts = []; let start = 0;
+    for (const cut of cuts) { parts.push(original.slice(start, cut.index).trim()); start = cut.index + cut[0].length; }
+    parts.push(original.slice(start).trim());
+    return parts.filter(Boolean);
+  }
   function resolveKeyword(keyword, { botName, userName }) {
     if (keyword === "{botName}") return normalize(botName);
     if (keyword === "{userName}") return userName ? normalize(userName) : "";
@@ -635,14 +713,17 @@
     var _a, _b, _c, _d, _e, _f, _g, _h;
     const random = (_a = ctx.random) != null ? _a : Math.random;
     const wantsPhrase = ctx.phrase.trim() !== "";
-    const fitting = entry.replies.filter((o) => usesPhrase(o, entry) === wantsPhrase).filter((o) => fitsMood(o, entry, ctx.mood)).filter((o) => !ctx.gentle || !DOUBTING.test(o.opener));
-    const option = (_b = pick(fitting.length ? fitting : entry.replies, random)) != null ? _b : { opener: "" };
-    const gentleList = (list) => ctx.gentle && list ? list.filter((t) => !DOUBTING.test(t)) : list;
+    const safeReplies = entry.replies.filter(o => !usesPhrase(o, entry));
+    const fitting = safeReplies.filter((o) => fitsMood(o, entry, ctx.mood)).filter((o) => !ctx.gentle || !DOUBTING.test(o.opener));
+    const choose = ctx.chooseFresh || ((list) => pick(list, random));
+    if (!safeReplies.length) return choose(["What would you like to explore about that?", "Which part matters most to you?", "We can look at what would be useful for you next."]);
+    const option = (_b = choose(fitting.length ? fitting : safeReplies)) != null ? _b : { opener: "" };
+    const gentleList = (list) => list ? list.filter(t => !/\{phrase\}/.test(t) && (!ctx.gentle || !DOUBTING.test(t))) : list;
     const parts = [
       option.opener,
-      pick(gentleList((_c = option.followUps) != null ? _c : entry.followUps), random),
-      pick((_d = option.thoughts) != null ? _d : entry.thoughts, random),
-      pick((_e = option.feelings) != null ? _e : entry.feelings, random)
+      choose(gentleList((_c = option.followUps) != null ? _c : entry.followUps)),
+      choose(gentleList((_d = option.thoughts) != null ? _d : entry.thoughts)),
+      choose(gentleList((_e = option.feelings) != null ? _e : entry.feelings))
     ].filter(Boolean);
     const emoji = (_g = pick(emojiForMood((_f = entry.emoji) != null ? _f : [], ctx.mood), random)) != null ? _g : "";
     const sentence = fill(parts.join(" "), {
@@ -727,44 +808,37 @@
     "staff"
   ];
   var EMPATHY_LINES = {
-    depressed: [
-      "I'm so sorry to hear that {reflected}. That sounds really painful.",
-      "It sounds like {reflected}, and I'm really sorry you're going through that.",
-      "Thank you for trusting me with this. It sounds like {reflected}, and that's a lot to carry.",
-      "That sounds so hard. I'm sorry {reflected}.",
-      "Oh, {userName}, I'm so sorry {reflected}. You don't have to go through this alone.",
-      "I'm really sorry {reflected}. Your feelings make complete sense."
-    ],
-    distressed: [
-      "That sounds like a lot to deal with. It's completely understandable to feel this way when {reflected}.",
-      "I can hear that {reflected}. That sounds really overwhelming, and it's okay to feel that way.",
-      "I'm sorry {reflected}. Let's take it one step at a time, together.",
-      "{userName}, it makes so much sense that you'd feel anxious when {reflected}. You're handling a lot."
-    ],
-    angry: [
-      "I'm sorry {reflected}. That sounds really frustrating.",
-      "It makes sense that you'd feel upset when {reflected}.",
-      "I'm really sorry that {reflected}. Your frustration is completely understandable.",
-      "{userName}, I'd be upset too if {reflected}. I'm sorry you had to deal with that."
-    ],
-    happy: [
-      "I love hearing that {reflected}! 😊",
-      "That's such great news that {reflected}!",
-      "That's wonderful that {reflected}! I'm so happy for you.",
-      "Yay, {userName}! I'm so glad {reflected}. 😊"
-    ],
-    jolly: ["Haha, I love that! 😄", "That made me smile too! 😄", "Haha, you're in a great mood, I love it!"]
-  };
+  "depressed": [
+    "I'm sorry this is painful. You don't have to sort everything out right now.",
+    "Your feelings deserve care. We can take this at your pace."
+  ],
+  "distressed": [
+    "Let's take this one step at a time.",
+    "You don't need every answer right now. We can focus on one manageable part."
+  ],
+  "angry": [
+    "That sounds frustrating. Let's give you some space to decide what would help.",
+    "I want to help you find a way forward that works for you."
+  ],
+  "happy": [
+    "That's lovely to hear!",
+    "I'm glad there's something worth celebrating."
+  ],
+  "jolly": [
+    "It's good to share a lighthearted moment!",
+    "There's room to enjoy the good moments, too."
+  ]
+};
   var MIXED_LINES = [
-    "It sounds like {reflected}. That's a lot happening at once, the good and the hard, and it's okay to feel both.",
-    "{Reflected}. There's so much going on: something wonderful, and real pressure at the same time. That's a lot to carry."
-  ];
+  "Both feelings can matter at the same time.",
+  "You don't need to force one feeling to cancel out the other."
+];
   var GOOD_EVENT = /\b(pregnant|expecting|baby|married|engaged|promoted|new job|graduat\w*|wedding|new house|got accepted|got hired|passed)\b/;
   var FEELING_ONLY_LINES = {
     depressed: [
       "I'm so sorry you're feeling this way.",
       "I'm really sorry you're feeling down. I'm right here with you.",
-      "That sounds really heavy, {userName}. I'm here, and I'm listening.",
+      "That sounds really heavy, {userName}. You can take your time with this.",
       "I'm sorry you're hurting. Your feelings matter, and so do you."
     ],
     distressed: [
@@ -809,19 +883,21 @@
     "By the way, I've been thinking about what you shared earlier. How are you feeling about {topic} now?",
     "Before I forget, how are you holding up with {topic}?"
   ];
-  var PERSON_LINES = ["Thank you for telling me that {reflected}.", "I'm glad you shared that {reflected}.", "It sounds like {reflected}."];
+  var PERSON_LINES = [
+  "Thank you for trusting me with this.",
+  "We can focus on what would help you most."
+];
   var PERSON_LINES_LONG = ["Thank you for telling me about your {person}.", "It sounds like your {person} is an important part of this."];
-  var STATEMENT_LINES = ["Thanks for telling me that {reflected}.", "I'm glad you shared that {reflected}.", "Oh, {reflected}! Thanks for letting me know."];
+  var STATEMENT_LINES = [
+  "Thank you for sharing that with me.",
+  "What would be useful to explore next?"
+];
   var ACK_LINES = ["Thanks for sharing that with me.", "That's interesting, thank you for telling me.", "I appreciate you sharing that."];
   var QUESTION_LINES = [
-    "You asked “{quoted}”. That's a really thoughtful question. I don't have a sure answer, but I'd love to hear what you think.",
-    "About “{quoted}”: I'm honestly not sure, but we can think it through together. What's your take?",
-    "“{quoted}” is a good question, and I wish I had a clear answer. What are your thoughts?"
-  ];
-  var REQUEST_LINES = [
-    "I'm sorry, I don't know much about {topic} yet. I'd love to help with something else, though: Beyond AI's services and products, the Q-Pod and e-cash, or just a chat!",
-    "Hmm, {topic} is outside what I know, I'm sorry! Is there something else I can help you with?"
-  ];
+  "I don't have enough information for a confident answer yet. Which part would you like help with?",
+  "I can help you explore the options. What outcome would be useful to you?"
+];
+  var REQUEST_LINES = ["I may need a little more detail to help. What outcome are you looking for?", "I can help you explore Beyond AI products and services, or work through what matters to you."];
   var REQUEST = /^(?:please )?(?:tell me (?:more )?about|explain|describe|teach me about|what do you know about|can you tell me about|talk about)\s+(.+)$/;
   var COMPANY_QUESTION_LINES = [
     "You asked “{quoted}”. I don't want to give you a wrong answer, so that's one for the team. They'll be happy to help.",
@@ -879,13 +955,6 @@
     if (pieces.length === 0) return null;
     let kept = pieces;
     let summary = "";
-    if (pieces.length > MAX_PIECES) {
-      const ranked = [...pieces].sort((a, b) => IMPORTANCE[b.kind] - IMPORTANCE[a.kind] || a.i - b.i);
-      kept = ranked.slice(0, MAX_PIECES - 1).sort((a, b) => a.i - b.i);
-      const rest = ranked.slice(MAX_PIECES - 1).sort((a, b) => a.i - b.i);
-      const items = rest.map((p) => summarise(p.note, ctx));
-      summary = fill(ALSO_MENTIONED, { list: listOf(items) });
-    }
     const feelings = pieces.filter((p) => p.kind === "feeling");
     const strongest = feelings.sort((a, b) => strength(b.note) - strength(a.note))[0];
     const dominant = (
@@ -916,7 +985,7 @@
       var _a2;
       const usable = lines.filter((t) => userName || !t.includes("{userName}"));
       const options = usable.filter((t) => !used.has(t));
-      const template = (_a2 = pick(options.length ? options : usable, random)) != null ? _a2 : "";
+      const template = (_a2 = (ctx.chooseFresh || ((list) => pick(list, random)))(options.length ? options : usable)) != null ? _a2 : "";
       used.add(template);
       return fillCase(template, { userName, ...values });
     };
@@ -939,6 +1008,11 @@
       const short = length >= 3 && length <= MAX_REFLECTED_WORDS;
       const lines = short ? PERSON_LINES : PERSON_LINES_LONG;
       return { kind: "person", text: choose(lines, { reflected: reflected(fromPerson), person: note.person }) };
+    }
+    const intent = conversationalIntent(note.text);
+    if (intent && !note.question) {
+      const text = choose(intent.openers, { reflected: reflected(intent.phrase) });
+      return { kind: "statement", text };
     }
     const topic = ctx.lizaTemplates !== false && ctx.responses && ctx.names ? findTopic(note.text, ctx.responses, ctx.names) : null;
     const fits = topic && (topic.entry.priority || !GENERIC_KEYWORDS.has(topic.keyword));
@@ -964,6 +1038,38 @@
     if (fits && topic) return { kind: "smalltalk", text: liza(topic, note, ctx, random) };
     return null;
   }
+  // Inspired by query.js: retain the phrase attached to each matching intent.
+  // Each opener is a complete grammatical template; fragments are never joined
+  // across unrelated clauses or randomly paired with incompatible opinions.
+  function conversationalIntent(text) {
+    const patterns = [
+      { re: /^i (?:want|need|hope|would like)\s+(.+)$/, openers: [
+        "What would help you move forward?",
+        "What matters most to you about this goal?",
+        "What have you tried so far?"
+      ] },
+      { re: /^i (?:cannot|can not|do not know how to|am not sure how to)\s+(.+)$/, openers: [
+        "Which part is getting in the way?",
+        "What approaches have you tried so far?",
+        "We can take this step by step. Where do you get stuck?"
+      ] },
+      { re: /^i (?:think|believe|guess|suppose)(?: that)?\s+(.+)$/, openers: [
+        "What led you to that view?",
+        "What experiences shaped your view?",
+        "Which part matters most to you?"
+      ] },
+      { re: /^i (?:remember|recalled)\s+(.+)$/, openers: [
+        "What stands out about that experience?",
+        "What brought that memory to mind?",
+        "What would you like to explore about that memory?"
+      ] }
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern.re);
+      if (match && match[1].split(" ").length <= 40) return { phrase: match[1], openers: pattern.openers };
+    }
+    return null;
+  }
   function quote(original) {
     const words = original.replace(/^\s*(and|also|so|but|plus)\b[,\s]*/i, "").replace(/[?!.\s]+$/, "").split(/\s+/);
     const short = words.slice(0, 14).join(" ") + (words.length > 14 ? "…" : "");
@@ -979,7 +1085,7 @@
     return rest.length <= 2 && note.text.split(" ").length <= 6;
   }
   function liza(topic, note, ctx, random) {
-    return composeReply(topic.entry, { ...topic, ...ctx.names, mood: note.mood.mood, gentle: ctx.gentle, reflections: ctx.reflections, random });
+    return composeReply(topic.entry, { ...topic, ...ctx.names, mood: note.mood.mood, gentle: ctx.gentle, reflections: ctx.reflections, chooseFresh: ctx.chooseFresh, random });
   }
   function strength(note) {
     return note.mood.mood === "neutral" ? 0 : Math.max(...Object.values(note.mood.scores));
@@ -1216,7 +1322,7 @@
   var DEFAULT_MOOD_LINES = {
     angry: ["I can hear that you're angry.", "That sounds really frustrating.", "I understand why that would make you upset."],
     distressed: ["That sounds stressful. Let's take it one step at a time.", "I can tell this is weighing on you.", "Take a slow breath. I'm here with you."],
-    depressed: ["I'm sorry you're feeling this way.", "That sounds heavy. Thank you for telling me.", "I'm here, and I'm listening."],
+    depressed: ["I'm sorry you're feeling this way.", "That sounds heavy. Thank you for telling me.", "You can take your time with this."],
     jolly: ["Haha, I like your energy!", "You're in a playful mood!", "😄 Good one."],
     happy: ["That's great to hear!", "I love that.", "Glad you're feeling good!"]
   };
@@ -1237,6 +1343,21 @@
   function createBot(options = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
     const random = (_a = options.random) != null ? _a : Math.random;
+    const recentTemplates = [];
+    let rememberedWording = () => "";
+    function chooseFresh(list) {
+      if (!list || !list.length) return undefined;
+      const history = rememberedWording();
+      const fresh = list.filter(item => !recentTemplates.includes(item) && !history.includes(normalize(item)));
+      // When a short bank is exhausted, revisit its least recently used wording
+      // rather than falling straight back to a random repeated phrase.
+      const oldest = Math.min(...list.map(item => recentTemplates.lastIndexOf(item)));
+      const alternatives = list.filter(item => recentTemplates.lastIndexOf(item) === oldest);
+      const selected = pick(fresh.length ? fresh : alternatives, random);
+      recentTemplates.push(selected);
+      if (recentTemplates.length > 48) recentTemplates.shift();
+      return selected;
+    }
     const synonymsList = (_b = options.synonyms) != null ? _b : [];
     const opts = {
       // Keys get the same spelling fixes as the input ("ai" -> "artificial intelligence"), so they always line up.
@@ -1316,6 +1437,173 @@
       /** Subjects mentioned recently ("quantum pod"), with the turn they were last mentioned. */
       context: /* @__PURE__ */ new Map()
     };
+    // Small, local memory: no server or API is required. Clear chat clears memory too.
+    const memoryKey = options.memoryKey || "beyondai.via.memory.v1";
+    const memoryEnabled = options.memory !== false;
+    const memoryTTL = 7 * 24 * 60 * 60 * 1000;
+    const recent = [];
+    let wordingSnapshot, wordingCache = "";
+    rememberedWording = () => {
+      const latest = recent[recent.length - 1];
+      if (latest !== wordingSnapshot) {
+        wordingSnapshot = latest;
+        wordingCache = normalize(recent.slice(-5).map(exchange => exchange.assistant).join(" "));
+      }
+      return wordingCache;
+    };
+    const remembered = [];
+    const concerns = [];
+    let activeConcern = null;
+    let focusConcern = null;
+    let resolvedConcern = null;
+    const listening = { noAdvice: false, noQuestions: false };
+    const alignment = { stage: 0, lastTurn: -3, service: "" };
+    let lastSubjects = [];
+    function saveMemory() {
+      if (!memoryEnabled) return;
+      try {
+        localStorage.setItem(memoryKey, JSON.stringify({ version: 1, savedAt: Date.now(),
+          userName: state.userName, recent, remembered, lastSubjects,
+          profile: state.profile, turn: state.turn, context: [...state.context],
+          concerns, activeConcern, listening, alignment }));
+      } catch (_) { /* Private browsing/storage limits: retain memory for this visit. */ }
+    }
+    function restoreMemory() {
+      if (!memoryEnabled) return;
+      try {
+        const m = JSON.parse(localStorage.getItem(memoryKey) || "null");
+        if (!m) return;
+        if (m.version !== 1 || !Number.isFinite(m.savedAt) || Date.now() - m.savedAt > memoryTTL) {
+          localStorage.removeItem(memoryKey); return;
+        }
+        const short = (v, max) => typeof v === "string" && v.length <= max;
+        if (short(m.userName, 100)) state.userName = m.userName;
+        if (Array.isArray(m.recent)) recent.push(...m.recent.filter(t => t && short(t.user, 8000) && short(t.assistant, 30000)).slice(-30));
+        if (Array.isArray(m.remembered)) remembered.push(...m.remembered.filter(t => short(t, 500)).slice(-20));
+        if (Array.isArray(m.lastSubjects)) lastSubjects = m.lastSubjects.filter(id => opts.knowledge.some(e => e.id === id)).slice(0, 3);
+        if (Number.isSafeInteger(m.turn) && m.turn >= 0) state.turn = m.turn;
+        if (Array.isArray(m.concerns)) concerns.push(...m.concerns.filter(c =>
+          c && short(c.key, 80) && short(c.summary, 400) && ["open", "resolved"].includes(c.status)
+          && Number.isSafeInteger(c.turn) && c.turn >= 0 && c.turn <= state.turn
+          && ["", "work", "learning", "security", "software", "business"].includes(c.service)
+          && !/\b(?:astrix|nova|physics|veta|virtual experience)\b/i.test(c.summary)).slice(-8));
+        activeConcern = concerns.some(c => c.key === m.activeConcern && c.status === "open") ? m.activeConcern : null;
+        if (m.listening && typeof m.listening === "object") {
+          listening.noAdvice = m.listening.noAdvice === true;
+          listening.noQuestions = m.listening.noQuestions === true;
+        }
+        if (m.alignment && typeof m.alignment === "object") {
+          if (Number.isInteger(m.alignment.stage) && m.alignment.stage >= 0 && m.alignment.stage <= 3) alignment.stage = m.alignment.stage;
+          if (Number.isInteger(m.alignment.lastTurn) && m.alignment.lastTurn <= state.turn) alignment.lastTurn = m.alignment.lastTurn;
+          if (["", "work", "learning", "security", "software", "business"].includes(m.alignment.service)) alignment.service = m.alignment.service;
+        }
+        if (Array.isArray(m.context)) state.context = new Map(m.context.filter(t => Array.isArray(t) && contextTerms.includes(t[0]) && Number.isSafeInteger(t[1]) && t[1] <= state.turn));
+        if (m.profile && typeof m.profile === "object") {
+          for (const key of ["business", "size", "wantedTeam", "timeline", "location"]) if (short(m.profile[key], 300) || typeof m.profile[key] === "number") state.profile[key] = m.profile[key];
+          for (const key of ["pains", "needs"]) if (Array.isArray(m.profile[key])) state.profile[key] = m.profile[key].filter(t => short(t, 300)).slice(-20);
+          state.profile.buying = m.profile.buying === true;
+        }
+        state.topics = recent.map(t => t.user).slice(-30);
+        // Upgrade existing browser memory using only the user's own saved messages.
+        if (!Array.isArray(m.concerns)) {
+          for (const exchange of recent) if (!exchange.engine) trackConcerns(exchange.user, detectMood(exchange.user));
+          focusConcern = resolvedConcern = null;
+        }
+      } catch (_) { /* Invalid or unavailable storage must never stop the chatbot. */ }
+    }
+    restoreMemory();
+    function concernDomain(text) {
+      const domains = [
+        ["security", /\b(?:hacked|password|scam|virus|cybersecurity|cyber security|data breach|security)\b/, "security"],
+        ["learning", /\b(?:learn|learning|study|studying|exam|school|course|skill|education)\b/, "learning"],
+        ["workload", /\b(?:paperwork|spreadsheet|repetitive|manual tasks|automate|automation|overtime|workload|deadline|work|boss|job)\b/, "work"],
+        ["software", /\b(?:app|website|software|system|program)\b/, "software"],
+        ["business", /\b(?:business|customers|clients|sales|shop|store|company|staff|employees)\b/, "business"],
+        ["relationships", /\b(?:friend|partner|wife|husband|mother|father|family|lonely|ignored|relationship)\b/, ""]
+      ];
+      return domains.find(([, pattern]) => pattern.test(text)) || ["personal", null, ""];
+    }
+    function trackConcerns(raw, mood) {
+      focusConcern = null;
+      resolvedConcern = null;
+      const text = normalize(raw);
+      if (mood.crisis || /\b(?:astrix|nova|physics|veta|virtual experience)\b/.test(text)) return;
+      if (/\b(?:just listen|no advice|not looking for advice|do not (?:give|offer) advice)\b/.test(text)) listening.noAdvice = true;
+      if (/\b(?:no (?:more )?questions|do not ask|stop asking)\b/.test(text)) listening.noQuestions = true;
+      if (/\b(?:give me advice|advice please|suggest something|what should i do|what can help)\b/.test(text)) listening.noAdvice = false;
+      if (/\b(?:you can ask|ask me questions|questions are okay)\b/.test(text)) listening.noQuestions = false;
+      if (/\b(?:change (?:the )?(?:subject|topic)|something else|new topic|move on)\b/.test(text)) { activeConcern = null; return; }
+      const [domain] = concernDomain(text);
+      const open = concerns.filter(c => c.status === "open");
+      const previous = open.find(c => c.key === activeConcern);
+      const refersBack = /\b(?:that|this|it|same|still|again|earlier|before|remember|concern|problem|more|next|options)\b/.test(text) && text.split(" ").length <= 22;
+      focusConcern = open.find(c => domain !== "personal" && c.key === domain) || (refersBack ? previous : null);
+      if (/\b(?:resolved|fixed|sorted out|no longer (?:need|worried)|not worried anymore|problem is solved|issue is solved)\b/.test(text) && (focusConcern || previous)) {
+        const done = focusConcern || previous; done.status = "resolved"; done.turn = state.turn;
+        resolvedConcern = done.summary;
+        activeConcern = null; focusConcern = null;
+        if (splitSentences(raw).flatMap(splitConversationParts).length === 1) return;
+      }
+      for (const sentence of splitSentences(raw)) {
+        const t = normalize(sentence);
+        if (!/\b(?:i|my|we|our)\b/.test(t) || isQuestion(sentence)) continue;
+        if (!/\b(?:need|want|hope|struggl\w*|worr\w*|concern\w*|problem|cannot|can not|overwhelm\w*|stress\w*|depressed|lonely|sad|angry|anxious|hurt|afraid|fear|exhausted)\b/.test(t)) continue;
+        if (/\b(?:no advice|no questions|just listen)\b/.test(t) && t.split(" ").length < 9) continue;
+        let [key, , service] = concernDomain(t);
+        if (key === "personal" && domain !== "personal") [key, , service] = concernDomain(text);
+        const summary = (key !== "personal" && concernDomain(t)[0] === "personal" ? raw : sentence).trim().slice(0, 400);
+        const entry = concerns.find(c => c.key === key);
+        // Keep the concrete concern when a short continuation adds no new detail.
+        if (refersBack && t.split(" ").length <= 8 && previous) { focusConcern = previous; continue; }
+        if (entry) Object.assign(entry, {summary, service, status: "open", turn: state.turn});
+        else {
+          concerns.push({key, summary, service, status: "open", turn: state.turn});
+          if (concerns.length > 8) concerns.shift();
+        }
+        activeConcern = key;
+      }
+      if (focusConcern) activeConcern = focusConcern.key;
+    }
+    function memoryAnswer(raw) {
+      const text = normalize(raw);
+      if (/^(?:please )?(?:forget (?:everything|all|me|my (?:name|details)|our (?:chat|conversation|conversations))|clear (?:your |my |our )?(?:memory|history|conversation))$/.test(text)) {
+        reset(); return {text: "I've cleared your name and our saved conversation memory.", source: "memory"};
+      }
+      if (/^(?:please )?(?:forget|clear) my (?:needs|concerns|goals|problems)$/.test(text)) {
+        const summaries = concerns.map(c => normalize(c.summary));
+        const matchesConcern = value => summaries.some(summary => summary && normalize(value).includes(summary));
+        for (let i = recent.length - 1; i >= 0; i--) if (matchesConcern(recent[i].user)) recent.splice(i, 1);
+        for (let i = remembered.length - 1; i >= 0; i--) if (matchesConcern(remembered[i])) remembered.splice(i, 1);
+        state.topics = state.topics.filter(t => !matchesConcern(t));
+        state.profile.pains = []; state.profile.needs = [];
+        concerns.length = 0; activeConcern = focusConcern = resolvedConcern = null;
+        saveMemory();
+        return {text: "I've cleared the needs and concerns you shared.", source: "memory"};
+      }
+      const relation = text.match(/\b(?:what is|what s|do you remember|do you know) my (friend|wife|husband|son|daughter|mother|father|brother|sister|partner|colleague|boss)(?: s)? name\b/);
+      if (relation) {
+        const fact = [...remembered].reverse().find(t => normalize(t).startsWith(`my ${relation[1]} name is `));
+        return {text: fact || `You haven't told me your ${relation[1]}'s name yet.`, source: "memory"};
+      }
+      if (/\b(?:what is my name|what s my name|do you (?:remember|know) my name|who am i)\b/.test(text)) {
+        return { text: state.userName ? `Your name is ${state.userName}.` : "You haven't told me your name yet. What would you like me to call you?", source: "memory" };
+      }
+      if (/\b(?:what (?:are|were|is|was) my (?:main )?(?:needs?|concerns?|goals?|problems?)|remember (?:my|what i (?:need|am worried about))|what (?:am i|was i) (?:worried|concerned) about)\b/.test(text)) {
+        const open = concerns.filter(c => c.status === "open");
+        return {text: open.length ? "The needs and concerns you've shared are:\n" + open.map(c => "- " + c.summary).join("\n") : "I don't have an open concern saved yet. Tell me what matters most to you.", source: "memory"};
+      }
+      if (/^(?:what did i (?:just )?(?:say|ask)|repeat my last (?:message|question))$/.test(text)) {
+        return {text: recent.length ? `You said: “${recent[recent.length - 1].user}”` : "I don't have an earlier message from you in this chat yet.", source: "memory"};
+      }
+      if (/\b(?:what (?:were we|did we|have we) (?:talk|talking|discuss|discussing)|remember (?:our|the) (?:recent |last |previous )?(?:conversation|chat)|what (?:do you remember|have i told you)|summarize (?:our|the) (?:chat|conversation))\b/.test(text)) {
+        // An unrelated recall request must not promote hidden engine knowledge.
+        const visible = recent.filter(t => !t.engine).slice(-4);
+        const parts = [state.userName ? `Your name is ${state.userName}.` : "", ...remembered, ...concerns.filter(c => c.status === "open").map(c => "A concern you shared: “" + c.summary + "”")];
+        if (visible.length) parts.push("Recently, you told me or asked:\n" + visible.map(t => `- ${t.user}`).join("\n"));
+        return {text: parts.filter(Boolean).join("\n\n") || "We haven't built up any conversation history yet.", source: "memory"};
+      }
+      return null;
+    }
     const names = () => ({ botName: state.botName, userName: state.userName });
     const values = () => ({ ...timeValues(clock), botName: state.botName, userName: state.userName || "" });
     const say = (template, extra = {}) => tidy(fill(template, { ...values(), ...extra }));
@@ -1338,6 +1626,15 @@
       );
     }
     function reset() {
+      recentTemplates.length = 0;
+      recent.length = 0;
+      remembered.length = 0;
+      concerns.length = 0;
+      activeConcern = focusConcern = resolvedConcern = null;
+      listening.noAdvice = listening.noQuestions = false;
+      Object.assign(alignment, {stage: 0, lastTurn: -3, service: ""});
+      lastSubjects = [];
+      try { if (memoryEnabled) localStorage.removeItem(memoryKey); } catch (_) {}
       state.userName = void 0;
       state.topics = [];
       state.moods = [];
@@ -1353,58 +1650,142 @@
       state.context = /* @__PURE__ */ new Map();
     }
     function reply(message) {
-      const raw = String(message).trim();
+      const raw = String(message).trim().slice(0, 8000);
       const mood = detectMood(raw);
+      // Safety handling always precedes ordinary recall and conversation routing.
+      const recall = mood.crisis || splitSentences(raw).length > 1 ? null : memoryAnswer(raw);
+      if (recall) return { ...withBridge(recall, raw, mood), mood };
       state.moods.push(mood.mood);
+      state.moods = state.moods.slice(-30);
       if (raw) state.topics.push(raw);
+      state.topics = state.topics.slice(-30);
       state.turn += 1;
+      trackConcerns(raw, mood);
       const answer = answerFor(raw, mood);
       if (answer.source === "fallback") state.misses += 1;
       else state.misses = 0;
-      return { ...withBridge(withCare(answer, raw, mood), raw, mood), mood };
+      const result = { ...connectReply(withBrandClosing(withBridge(withCare(answer, raw, mood), raw, mood), raw, mood)), mood };
+      if (raw && !mood.crisis) {
+        const ids = (answer.topic || "").split(",").filter(id => opts.knowledge.some(e => e.id === id));
+        if (ids.length) lastSubjects = ids.slice(0, 3);
+        const engine = ids.some(id => opts.knowledge.some(e => e.id === id && e.engine)) || /\b(astrix|nova|physics|virtual experience)\b/i.test(raw);
+        recent.push({user: raw, assistant: result.text, engine});
+        if (recent.length > 30) recent.shift();
+        if (!engine) for (const sentence of splitSentences(raw)) {
+          const person = sentence.match(/\bmy (friend|wife|husband|son|daughter|mother|father|brother|sister|partner|colleague|boss)(?:['’]s)? name is\s+([\p{L}][\p{L}'’-]*(?:[ \t]+[\p{L}][\p{L}'’-]*){0,2})/iu);
+          if (person) {
+            const value = person[2].split(/\s+(?:and|but|who|is|works)\b/i)[0];
+            const key = `My ${person[1].toLowerCase()}'s name is `;
+            const old = remembered.findIndex(t => t.startsWith(key));
+            if (old >= 0) remembered.splice(old, 1);
+            remembered.push(key + value + ".");
+            if (remembered.length > 20) remembered.shift();
+          }
+          const note = sentence.match(/^\s*(?:please\s+)?remember (?:that\s+)?(.{1,500})$/i);
+          if (note && !/^(?:me|my name|our|the chat|when|what|how)\b/i.test(note[1])) {
+            if (!remembered.includes(note[1])) remembered.push(note[1]);
+            if (remembered.length > 20) remembered.shift();
+          }
+        }
+        saveMemory();
+      }
+      return result;
     }
     function answerFor(raw, mood) {
       var _a2, _b2, _c2, _d2, _e2, _f2, _g2, _h2, _i2;
       if (mood.crisis) return { text: opts.crisis.message, actions: opts.crisis.actions, source: "crisis" };
-      if (opts.care && state.lastLowTurn > 0 && state.turn - state.lastLowTurn <= 8 && splitSentences(raw).length <= 2 && FEELS_BETTER.test(normalize(raw))) {
+      if (resolvedConcern && splitSentences(raw).flatMap(splitConversationParts).length === 1) return {text: "Thanks for the update. I've marked that concern as resolved.", source: "memory"};
+      if (focusConcern && splitSentences(raw).length === 1 && normalize(raw).split(" ").length <= 22
+        && /^(?:what (?:can help|should i do|would you suggest|next|are my options)|tell me more|how (?:can you help|do i (?:start|proceed)|can i (?:start|handle|deal))|any (?:advice|suggestions))\b/.test(normalize(raw))
+        && !/\b(?:astrix|nova|physics|veta|virtual experience|price|pricing|cost)\b/.test(normalize(raw))) {
+        const context = {
+          work: "Let's look for a practical way to ease that workload.",
+          learning: "Let's find a learning option that suits your experience and goals.",
+          security: "Let's focus on the protection and support you need.",
+          software: "Let's narrow down the features that would be useful to you.",
+          business: "Let's focus on the part of your business that needs support."
+        }[focusConcern.service] || "We can take this one step at a time.";
+        const next = focusConcern.service
+          ? "Let's focus on what you need most, so I can point you toward a useful option."
+          : "We can work through that together, starting with the part you want help with.";
+        const question = listening.noQuestions ? "" : focusConcern.service
+          ? alignment.stage >= 2 && alignment.service === focusConcern.service
+            ? "Would you like help outlining your requirements for the Beyond AI team?"
+            : "Which part of that takes the most time or causes the most difficulty?"
+          : "Would you prefer to talk it through, or consider a small next step?";
+        return {text: [context, next, question].filter(Boolean).join("\n\n"), source: "empathy", topic: "concern-followup", caring: true, gentlePromotion: !focusConcern.service};
+      }
+      if (opts.care && state.lastLowTurn > 0 && state.turn - state.lastLowTurn <= 8 && splitSentences(raw).length === 1 && FEELS_BETTER.test(normalize(raw))) {
         state.lastLowTurn = 0;
         state.concern = null;
         const thanked = /\b(thanks|thank you|salamat)\b/.test(normalize(raw));
         const text = [pick(FEELING_BETTER_LINES, random), thanked ? "Thank you for talking with me." : "", "What helped you feel better?"].filter(Boolean).join(" ");
         return { text, source: "empathy", topic: "feeling-better" };
       }
-      const sentences = splitSentences(raw).map((original) => ({ original, text: applySynonyms(normalize(original), opts.synonyms) })).filter((s) => s.text);
+      const sentences = splitSentences(raw).flatMap(splitConversationParts).flatMap(original => planPhrases(original, lizaResponses, names())).map((original) => ({ original, text: applySynonyms(normalize(original), opts.synonyms) })).filter((s) => s.text);
       if (sentences.length === 0) return { text: say((_a2 = pick(opts.fallbacks, random)) != null ? _a2 : "", { phrase: "" }), source: "fallback" };
-      let nameLine = "";
+      let nameLine = resolvedConcern ? "Thanks for the update. I've marked the earlier concern as resolved." : "";
       for (const s of sentences) {
-        const name = extractName(s.text);
-        if (name) {
-          state.userName = name;
-          nameLine = `Nice to meet you, ${name}.`;
+        const recalled = memoryAnswer(s.original);
+        if (recalled) {
+          nameLine += `${nameLine ? " " : ""}${recalled.text}`;
           s.text = "";
+          continue;
+        }
+        const note = s.original.match(/^\s*(?:please\s+)?remember (?:that\s+)?(.{1,500})$/i);
+        if (note && !/^(?:me|my name|our|the chat|when|what|how)\b/i.test(note[1])) {
+          nameLine += `${nameLine ? " " : ""}I'll remember: ${note[1]}`;
+          s.text = "";
+          continue;
+        }
+        const introduction = readIntroduction(s.original);
+        if (introduction) {
+          const previous = state.userName;
+          state.userName = introduction.name;
+          nameLine = previous === introduction.name ? `Yes, ${introduction.name}, I remember your name.` : previous ? `I'll call you ${introduction.name} from now on.` : `Nice to meet you, ${introduction.name}.`;
+          // Keep the question or personal statement following the introduction.
+          s.original = introduction.rest;
+          s.text = applySynonyms(normalize(introduction.rest), opts.synonyms);
         }
       }
       const rest = sentences.filter((s) => s.text);
       const facts = opts.business ? extractBusiness(raw, normalize(raw)) : null;
       if (facts) state.profile = mergeProfile(state.profile, facts);
       const toldUsSomething = Boolean(facts && (facts.business || facts.size || facts.wantedTeam || facts.timeline || facts.location || facts.buying || facts.pains.length));
-      if (opts.business && rest.some((s) => asksForSummary(s.text))) return summaryReply();
+      if (opts.business && rest.length && rest.every((s) => asksForSummary(s.text))) return summaryReply();
       const timeBlocks = [];
       rest.forEach((s, i) => {
+        if (opts.business && asksForSummary(s.text)) {
+          const summary = summaryReply();
+          timeBlocks.push({at: i, text: summary.text, casual: true, actions: summary.actions});
+          return;
+        }
         const kind = timeQuestion(s.text);
         if (kind) timeBlocks.push({ at: i, text: timeAnswer(kind, clock, "I") });
+        else {
+          const casual = casualPartAnswer(s);
+          if (casual) timeBlocks.push({at: i, text: casual, casual: true});
+        }
       });
       const whole = rest.map((s) => s.text).join(" ");
       for (const term of contextTerms) if (containsPhrase(whole, term)) state.context.set(term, state.turn);
-      const hits = collectKnowledge(rest).filter((h) => !timeBlocks.some((t) => t.at === Math.round(h.at)));
+      const hits = collectKnowledge(rest).filter((h) => {
+        const at = Math.round(h.at);
+        if (timeBlocks.some(t => t.at === at)) return false;
+        const part = rest[at];
+        const ordinaryConcern = part && !isQuestion(part.original)
+          && PERSONAL.test(part.text) && /\b(?:need|want|worried|sad|angry|tired|exhausted|overwhelmed|struggling|budget)\b/.test(part.text)
+          && !/\b(?:beyond ai|astrix|nova|physics|veta|hrm|erp|talkora|quantum|e cash|ai education|course)\b/.test(part.text);
+        return !ordinaryConcern;
+      });
       const specific = hits.filter((h) => !h.entry.smallTalk && !h.entry.overview);
-      const topics = hits.filter((h) => !h.entry.smallTalk && !(h.entry.overview && specific.length)).filter((h, _, all) => {
+      const topics = hits.filter((h) => !h.entry.smallTalk && !(h.entry.overview && specific.some(other => Math.round(other.at) === Math.round(h.at)))).filter((h, _, all) => {
         var _a3;
         return !((_a3 = h.entry.skipIf) == null ? void 0 : _a3.some((id) => all.some((o) => o.entry.id === id)));
       });
       const byImportance = [...topics].sort((a, b) => Number(b.question) - Number(a.question) || a.at - b.at);
-      const shown = byImportance.slice(0, MAX_TOPICS_PER_ANSWER).sort((a, b) => a.at - b.at);
-      const more = byImportance.slice(MAX_TOPICS_PER_ANSWER);
+      const shown = byImportance.sort((a, b) => a.at - b.at);
+      const more = [];
       const smallTalkHits = hits.filter((h) => h.entry.smallTalk);
       const opener = (_b2 = smallTalkHits.find((h) => h.entry.brief)) == null ? void 0 : _b2.entry.brief;
       const answered = /* @__PURE__ */ new Set([...hits.map((h) => Math.round(h.at)), ...timeBlocks.map((t) => t.at), ...alsoAnswered]);
@@ -1416,10 +1797,19 @@
         });
         state.profile.needs = [.../* @__PURE__ */ new Set([...state.profile.needs, ...ids])];
       }
-      const heard = shown.length && !opts.smallTalkWithKnowledge ? null : listen(rest, { reflections: opts.reflections, responses: lizaResponses, names: names(), answered, skip, gentle: opts.gentle, lizaTemplates: opts.lizaTemplates, random });
+      const remaining = rest.map((part, i) => ({...part, i})).filter(part => !answered.has(part.i));
+      const personalParts = rest.map((part, i) => ({...part, i})).filter(part => !timeBlocks.some(block => block.casual && block.at === part.i) && !isQuestion(part.original) && (!answered.has(part.i) || PERSONAL.test(part.text) && /\b(?:need|want|worried|worry|afraid|sad|angry|happy|tired|exhausted|stressed|overwhelmed|cannot|can not|struggling|budget)\b/.test(part.text)));
+      const caringReply = assembleCaring(personalParts, "", detectMood(personalParts.map(p => p.original).join(" ")), true);
+      const otherParts = caringReply ? remaining.filter(part => isQuestion(part.original)) : remaining;
+      const otherHeard = listen(otherParts, { reflections: opts.reflections, responses: lizaResponses, names: names(), chooseFresh, gentle: opts.gentle, lizaTemplates: opts.lizaTemplates, random });
+      const heard = caringReply ? {
+        text: [caringReply.text, otherHeard && otherHeard.text, otherHeard && otherHeard.closing].filter(Boolean).join("\n\n"),
+        pieces: [{i: personalParts[0].i, text: caringReply.text}, ...(otherHeard ? otherHeard.pieces.map(p => ({...p, i: otherParts[p.i] ? otherParts[p.i].i : p.i})) : [])],
+        closing: "", kinds: ["feeling", ...(otherHeard ? otherHeard.kinds : [])]
+      } : otherHeard;
       const meaningful = Boolean(heard);
       const businessTalk = toldUsSomething || shown.some((h) => !h.entry.casual);
-      const advice = businessTalk ? adviceFor(shown.map((h) => h.entry.id)) : null;
+      const advice = businessTalk && !caringReply && !listening.noAdvice ? adviceFor(shown.map((h) => h.entry.id)) : null;
       const lateNight = lateNightLine(mood);
       if (shown.length || timeBlocks.length) {
         const blocks = [...shown.map((h) => ({ at: h.at, text: answerOf(h.entry) })), ...timeBlocks].sort((a, b) => a.at - b.at);
@@ -1446,10 +1836,10 @@
         const moodHandled = meaningful || shown.some((h) => h.entry.moodOk);
         const thanks = (_c2 = smallTalkHits.find((h) => h.entry.closing)) == null ? void 0 : _c2.entry.closing;
         const text = withMood(lead, mood, [...bodyTexts, tail].filter(Boolean).join("\n\n"), { acknowledge: !moodHandled });
-        const topicIds = [...shown.map((h) => h.entry.id), ...timeBlocks.map(() => "time"), ...meaningful ? ["listening"] : [], ...advice ? [`advice:${advice.key}`] : []];
-        const actions2 = mergeActions(shown, advice == null ? void 0 : advice.actions);
+        const topicIds = [...shown.map((h) => h.entry.id), ...timeBlocks.map(t => t.casual ? "conversation" : "time"), ...meaningful ? ["listening"] : [], ...advice ? [`advice:${advice.key}`] : []];
+        const actions2 = mergeActions(shown, [...(advice && advice.actions || []), ...timeBlocks.flatMap(block => block.actions || [])]);
         const business = Boolean(advice) || shown.some((h) => !h.entry.casual);
-        return { text, actions: actions2.length ? actions2 : void 0, source: shown.length ? "knowledge" : "time", topic: topicIds.join(","), business, person: heard == null ? void 0 : heard.person, outro: thanks };
+        return { text, actions: actions2.length ? actions2 : void 0, source: shown.length ? "knowledge" : timeBlocks.every(t => t.casual) ? "smalltalk" : "time", topic: topicIds.join(","), business, caring: Boolean(caringReply) || timeBlocks.some(t => t.casual), person: heard == null ? void 0 : heard.person, outro: thanks };
       }
       if (meaningful) {
         const thanks = (_d2 = smallTalkHits.find((h) => h.entry.closing)) == null ? void 0 : _d2.entry.closing;
@@ -1457,7 +1847,7 @@
         const emotional = heard.kinds.some((k) => k === "feeling" || k === "person");
         const askedUs = heard.kinds.includes("company-question");
         const actions2 = (_e2 = advice == null ? void 0 : advice.actions) != null ? _e2 : askedUs ? opts.fallbackActions : void 0;
-        return { text: withMood("", mood, text, { acknowledge: false }), actions: actions2, source: emotional ? "empathy" : "smalltalk", topic: heard.kinds.join(","), business: Boolean(advice) || askedUs, person: heard.person, outro: thanks };
+        return { text: withMood("", mood, text, { acknowledge: false }), actions: actions2, source: emotional ? "empathy" : "smalltalk", topic: caringReply ? "assembled-conversation" : heard.kinds.join(","), responseSet: caringReply && caringReply.responseSet, caring: Boolean(caringReply), gentlePromotion: caringReply && caringReply.gentlePromotion, business: Boolean(advice) || askedUs, person: heard.person, outro: thanks };
       }
       if (smallTalkHits.length) {
         const h = smallTalkHits[0];
@@ -1476,28 +1866,241 @@
       const fallback = say((_i2 = pick(opts.fallbacks, random)) != null ? _i2 : "", { phrase });
       return { text: [nameLine, fallback].filter(Boolean).join(" "), actions, source: "fallback" };
     }
+    function casualPartAnswer(part) {
+      const text = part.text.replace(/\bu\b/g, "you");
+      const comments = [];
+      if (/\b(?:movie|film|cinema|watched|watch)\b/.test(text)) {
+        const askedWatching = /\b(?:have you|did you|you ever)\b.*\b(?:watch|watched|seen)\b/.test(text);
+        comments.push(chooseFresh(askedWatching
+          ? ["I haven't watched it myself, but a film's atmosphere and storytelling can make it memorable.", "I don't have a personal viewing experience, but I'm happy to discuss the story and what made it work for you."]
+          : ["A film's mood can be a big part of what makes it stay with you after the ending.", "A story can be memorable for its atmosphere as much as its plot."]));
+      }
+      if (/\b(?:coffee|tea)\b/.test(text)) {
+        comments.push(chooseFresh(["I don't drink coffee or tea myself, but I can talk about the flavours, the ritual, or what makes a favourite cup special.", "I don't have a drink preference myself, but enjoying a familiar cup can be a lovely part of a routine."]));
+      }
+      if (/\b(?:brother|sister|mother|father|family|friend|partner)\b/.test(text) && /\b(?:far away|far from|away|abroad|overseas|miss|missing|distance)\b/.test(text)) {
+        comments.push(chooseFresh(listening.noAdvice
+          ? ["Distance from someone close can hurt. There's no need to push that sadness aside.", "Missing someone close deserves some space, even when other things in the day are going well."]
+          : ["Being apart from someone close can hurt. A regular call or a small shared routine can help keep the connection part of daily life.", "Distance can be hard on close relationships. Finding a way to spend a little time together remotely may make it feel less isolating."]));
+      }
+      return comments.length ? comments.join(" ") : null;
+    }
+    function assembleCaring(phrases, lead, mood, includeKnowledgeContext = false) {
+      const text = phrases.map(p => p.text).join(" ");
+      // Keep product knowledge opt-in and preserve factual answer routes.
+      const namedTopic = /\b(?:beyond ai|astrix|nova|physics|veta|virtual experience|quantum pod|q pod|ecash|electronic cash|slot machine|hrm|erp|talkora|count trust|agentic ai|cloud|cybersecurity|cyber security|your (?:services|products|course|company)|ai course|artificial intelligence course|contact|pricing|price|webgpu)\b/.test(text);
+      const previous = recent[recent.length - 1];
+      const continuation = /^(?:it|that|this|still|same|yes|no)\b/.test(text) && /\b(?:still|again|same|hurts|hard|difficult|lonely|better|worse)\b/.test(text) && text.split(" ").length <= 18;
+      const continues = Boolean(continuation && (focusConcern || previous && !previous.engine && detectMood(previous.user).mood !== "neutral"));
+      const aboutVia = /\byou\b.*\b(?:me|my|care|listen|understand)\b/.test(text);
+      const reportedSpeech = phrases.some(p => /["“”]|\b(?:said|told|asked|wrote)\b/i.test(p.original));
+      const personal = continues || aboutVia || phrases.some(p => /\b(?:i|me|my|we|our)\b/.test(p.text));
+      const reflective = continues || aboutVia || reportedSpeech || phrases.some(p => conversationalIntent(p.text)) || mood.mood !== "neutral";
+      const opinionRequest = p => /\b(?:what do you think|your (?:thoughts|opinion)|what would you suggest|any advice)\b/.test(p.text);
+      if (!opts.care || namedTopic && !includeKnowledgeContext || !personal || !reflective || phrases.some(p => isQuestion(p.original) && /\b(?:you|your|beyond)\b/.test(p.text) && !opinionRequest(p))) return null;
+      const reflected = value => readable(reflect(value, opts.reflections)).replace(/[.!?]+$/, "");
+      const pieces = [];
+      const seen = new Set();
+      for (const phrase of phrases) {
+        if (opinionRequest(phrase) && !/\b(?:i|my|we|our)\b/.test(phrase.text)) continue;
+        if (/^(?:just listen|only listen|no advice|no (?:more )?questions|do not ask|stop asking)\b/.test(phrase.text)) continue;
+        // Preserve the speaker's wording when a second "you" or quoted speech
+        // could refer to someone else. Never turn their story into our own claim.
+        const preserveVoice = /\byou\b/.test(phrase.text) || /["“”]|\b(?:said|told|asked|wrote)\b/i.test(phrase.original);
+        let content = preserveVoice ? 'you said, “' + phrase.original.trim().slice(0, 260).replace(/[.!?]+$/, "") + '”' : reflected(phrase.text);
+        // Reflect a painful self-judgment as a judgment, never as an established fact.
+        if (!preserveVoice) content = content.replace(/\byou(?:'re| are) (?:a )?(failure|worthless|useless|never good enough)\b/gi, 'you are judging yourself as "$1"');
+        if (!content || seen.has(content)) continue;
+        seen.add(content);
+        const feeling = detectMood(phrase.original);
+        const type = /^i (?:want|need|hope|would like)\b/.test(phrase.text) ? "goal" : feeling.mood !== "neutral" ? "feeling" : "experience";
+        pieces.push({type, content, mood: feeling.mood, scores: feeling.scores, original: phrase.text, quoted: preserveVoice});
+      }
+      if (!pieces.length) return null;
+      const effectiveMood = continues && mood.mood === "neutral" ? detectMood(focusConcern ? focusConcern.summary : previous.user).mood : mood.mood;
+      const negativeMoods = ["angry", "depressed", "distressed"];
+      const negative = negativeMoods.includes(effectiveMood);
+      // Score both sides of each phrase: a single sentence can contain mixed emotions.
+      const mixed = pieces.some(p => {
+        const scores = p.scores;
+        return negativeMoods.some(m => scores[m] > 0) && (scores.happy > 0 || scores.jolly > 0);
+      }) || pieces.some(p => negativeMoods.includes(p.mood)) && pieces.some(p => ["happy", "jolly"].includes(p.mood));
+      const profiles = {
+        angry: {
+          acknowledgements: ["I hear how frustrating this has been.", "That sounds upsetting, and I'm taking what you said seriously.", "You can tell me what happened without having to soften how you feel."],
+          thoughts: ["My thought is that your frustration deserves attention, while what you do next can still be a choice.", "I'd separate what happened from what you want to happen next; that may make this easier to untangle.", "I don't want to jump to conclusions about anyone involved. What you've described matters on its own."],
+          care: ["I want to help you express what matters without making the situation harder for you.", "We can slow this down and make room for the hurt underneath the anger, if that fits."],
+          questions: ["Would you rather let it out, or think through what to say next?", "What would you most like the other person to understand?"]
+        },
+        depressed: {
+          acknowledgements: ["I'm sorry things feel this heavy.", "Thank you for telling me how things have been.", "You don't have to make this sound easier than it feels."],
+          thoughts: ["I don't think you have to solve everything at once; we can stay with what feels manageable today.", "My thought is that struggling right now doesn't erase your worth or the effort you've already made.", "I wouldn't measure your whole life by how this difficult moment feels."],
+          care: ["I want to understand before offering suggestions.", "We can take this at your pace. You don't have to force a cheerful answer."],
+          questions: ["What would make the next little while feel a bit more manageable?", "Would it help more to talk about what happened, or to have me listen for a while?"]
+        },
+        distressed: {
+          acknowledgements: ["That sounds like a lot to hold at once.", "I hear how unsettled this is making you feel.", "Let's give what you're going through some room."],
+          thoughts: ["My thought is that we can separate what needs attention now from what can wait.", "I wouldn't expect you to have every answer while you're feeling overwhelmed.", "It may help to focus on one part of this rather than trying to untangle everything together."],
+          care: ["I'm here to help you work through this at a pace that suits you.", "You can tell me which part matters most; I'll follow your lead."],
+          questions: ["Which part feels most pressing right now?", "What would feel most helpful from me right now?"]
+        },
+        happy: {
+          acknowledgements: ["I'm glad you shared this with me!", "That's lovely to hear.", "This sounds like a moment worth enjoying."],
+          thoughts: ["My thought is that it's worth pausing to appreciate what this means to you.", "I'd give this good moment some space before rushing straight to the next thing.", "You get to decide what makes this meaningful; it doesn't have to look impressive to anyone else."],
+          care: ["I'm happy to celebrate this with you.", "I'd love to hear the part that made you smile most."],
+          questions: ["What has been the best part for you?", "How would you like to mark the moment?"]
+        },
+        jolly: {
+          acknowledgements: ["There's a lot of energy in what you're sharing!", "I'm glad you're having a good moment!", "That sounds like something to enjoy."],
+          thoughts: ["My thought is that little moments of fun can deserve as much attention as the big milestones.", "I'd say there's room to enjoy this without immediately making it productive.", "It sounds worth making a little room for what brings you joy."],
+          care: ["I'm happy to share the celebration.", "You can tell me the fun part too; our conversation doesn't have to be all serious."],
+          questions: ["What's been making you smile?", "What was the highlight?"]
+        },
+        neutral: {
+          acknowledgements: ["Thank you for sharing that with me.", "Thank you for sharing that with me.", "Let's give that a little thought."],
+          thoughts: ["We can start with what would make a useful difference for you.", "A clear first step is often more useful than trying to plan everything at once.", "There may be a few ways to approach this; the right one depends on the result you need."],
+          care: ["I want to give you a thoughtful answer, and you can correct me if I've missed something.", "We can explore it together without rushing to a conclusion."],
+          questions: ["Which part would you like to explore together?", "What would you most like me to understand?"]
+        }
+      };
+      const profile = mixed ? profiles.neutral : profiles[effectiveMood] || profiles.neutral;
+      const focus = pieces.find(p => negativeMoods.includes(p.mood)) || pieces.find(p => p.type === "goal") || pieces[pieces.length - 1];
+      const responseSets = [
+        {id: "warm", acknowledge: true, question: "support"},
+        {id: "practical", acknowledge: false, question: "next"},
+        {id: "reflective", acknowledge: false, question: "meaning"},
+        {id: "encouraging", acknowledge: true, question: "goal"},
+        {id: "conversational", acknowledge: false, question: "open"}
+      ];
+      const eligibleSets = responseSets.filter(set => !negative || set.id !== "encouraging");
+      const responseSetId = chooseFresh(eligibleSets.map(set => "response-set:" + set.id)).replace("response-set:", "");
+      const responseSet = eligibleSets.find(set => set.id === responseSetId) || eligibleSets[0];
+      // Situation observations are tentative; never invent motives or personal experiences.
+      let observations = [];
+      if (/\b(?:passed|promoted|promotion|graduated|finished|achieved|won|succeeded)\b/.test(text))
+        observations = ["That sounds like a meaningful milestone. I think there's room to acknowledge the effort behind it.", "This sounds like something you've been working toward; I'd give yourself a moment to take it in."];
+      else if (/\b(?:died|passed away|grief|grieving|funeral|miss my)\b/.test(text))
+        observations = ["Loss can hold many feelings at once. I wouldn't expect you to put it into neat words.", "If you'd like, there's room here to talk about the person or what you miss; we don't have to look for a solution."];
+      else if (/\b(?:i (?:am|feel|think i am) (?:a )?(?:failure|worthless|useless|never good enough)|hate myself)\b/.test(text))
+        observations = ["I hear how harshly you're judging yourself. I wouldn't treat that judgment as a fact about your worth.", "Something painful has happened, but I don't think that makes you a failure as a person."];
+      else if (/\b(?:lonely|alone|left out|ignored|no one listens)\b/.test(text))
+        observations = ["Wanting to be heard and included is understandable. I wouldn't take this moment as proof that you don't matter.", "Feeling disconnected can be painful. I want to understand the kind of connection you're missing."];
+      else if (/\b(?:boss|partner|friend|wife|husband|mother|father|colleague)\b/.test(text) && negative)
+        observations = ["It sounds like this relationship matters to you. I can take your hurt seriously without assuming what the other person intended.", "My thought is that what you need from this person may matter as much as the disagreement itself."];
+      if (aboutVia && /\b(?:not|never|do not|cannot|can not)\b/.test(text))
+        observations = ["If my last reply missed what you meant, I'd like to understand it better and respond more carefully.", "You deserve a reply that addresses what you actually said. Let me slow down and pay attention to that."];
+      else if (aboutVia && !negative)
+        observations = ["I'm glad this conversation feels helpful. I'll keep paying attention to what you share.", "Thank you for telling me. I'd like to keep this conversation useful and comfortable for you."];
+      let thought = chooseFresh(observations.length ? observations : profile.thoughts);
+      thought = thought.replace(/^My (?:first )?thought is (?:that |to )?/, "I think ").replace(/^I think understand/, "I'd like to understand");
+      if (mixed) thought = chooseFresh(["I don't think you have to choose one feeling here; the good part and the difficult part can both matter.", "It sounds like more than one feeling is present. Enjoying something doesn't mean the painful part has disappeared."]);
+      let questions = focus.type === "goal" && !negative ? ["What would help you take the next step?", "What result would be most useful to you?"] : profile.questions;
+      if (mixed) questions = ["Which feeling would you like to give more attention to right now?", "Would you like to talk about the good part, the difficult part, or both?"];
+      const justListen = listening.noAdvice || /\b(?:just listen|only listen|do not (?:give|offer) advice|no advice|not looking for advice)\b/.test(text);
+      const noQuestions = justListen || listening.noQuestions || /\b(?:no (?:more )?questions|do not ask|stop asking)\b/.test(text);
+      const continuity = continues ? chooseFresh(["We don't have to rush this.", "We can keep working through this at your pace."]) : "";
+      const contributions = [];
+      const covered = new Set();
+      const themes = [
+        ["workload", /\b(?:work|boss|job|paperwork|repetitive|overtime|deadline|workload)\b/, ["A useful starting point for work is separating the tasks that need your judgment from routine steps that could be simplified.", "For the workload, we can look for small changes that free up time without adding more to your plate."]],
+        ["energy", /\b(?:tired|exhausted|burnt out|burned out|overwhelmed|stressed)\b/, ["Your energy matters too. A workable next step should ease the pressure rather than add another demand.", "There is room to protect your energy while we look for a practical way forward."]],
+        ["budget", /\b(?:budget|cost|costs|expensive|afford|money|financial|price)\b/, ["Affordability should guide the options. We can start with what you need most and keep the budget in view.", "We can keep the financial side practical by identifying essentials before considering extras."]],
+        ["learning", /\b(?:learn|learning|course|study|studying|skill|education|coding)\b/, ["For learning, a small practical exercise can make the next step clearer; your starting level and available time should shape the pace.", "A learning path should fit your current experience, with room to practise rather than pressure to know everything already."]],
+        ["time", /\b(?:no time|little time|busy|hours|schedule|family responsibilities|children|kids)\b/, ["The time you have available matters. We can look for an approach that fits around your existing responsibilities.", "A realistic plan needs to leave room for your responsibilities, rather than assume unlimited time."]],
+        ["relationship", /\b(?:friend|partner|wife|husband|mother|father|family|lonely|ignored|left out)\b/, ["The personal side deserves attention too. What support you need from people around you can be part of finding a way forward.", "Relationships can carry a lot of weight. We can take your feelings seriously without assuming what anyone else intended."]],
+        ["milestone", /\b(?:passed|promoted|promotion|graduated|achieved|won|succeeded)\b/, ["That achievement deserves a moment of appreciation, including the effort it took to get there.", "There is room to enjoy the achievement before deciding what comes next."]],
+        ["software", /\b(?:app|website|software|system)\b/, ["For the technical side, we can start with the task it needs to solve and the people who will use it, before narrowing down features.", "The most useful technical option should fit the actual task, so we can begin with the essential features."]],
+        ["security", /\b(?:hacked|scam|security|password|data breach|virus)\b/, ["For security, it helps to identify what is affected and what needs protecting before choosing support.", "We can keep the security question concrete by identifying the affected systems and the protection you need."]]
+      ];
+      for (const part of pieces) {
+        let matched = false;
+        for (const [key, pattern, lines] of themes) if (pattern.test(part.original)) {
+          matched = true;
+          if (!covered.has(key)) { contributions.push(chooseFresh(lines)); covered.add(key); }
+        }
+        if (!matched && pieces.length > 1 && part.mood !== "neutral" && !covered.has(part.mood)) {
+          const partProfile = profiles[part.mood] || profile;
+          contributions.push(chooseFresh(partProfile.thoughts).replace(/^My (?:first )?thought is that /, "I think "));
+          covered.add(part.mood);
+        }
+      }
+      const support = justListen ? "Take your time. You can share as much or as little as you want, without pressure to find a solution." : chooseFresh(profile.care);
+      // Respond to the subject directly. Neutral goals don't need a ritual
+      // thank-you, a generic thought, and a generic question on every turn.
+      const acknowledgement = responseSet.acknowledge && effectiveMood !== "neutral" && (!previous || detectMood(previous.user).mood !== effectiveMood)
+        ? chooseFresh(profile.acknowledgements) : "";
+      const questionChoices = [
+        ["workload", ["Which task takes the most time?", "Where does the work tend to get held up?", "Is the bigger difficulty the amount of work or the way it is organized?"]],
+        ["learning", ["What would you like to be able to do with AI?", "Would a guided exercise or a small project suit you better?", "How much time could you comfortably set aside to practise?"]],
+        ["budget", ["Have you set a budget range yet?", "Which part is essential to keep within budget?", "Would it help to separate the essentials from the extras?"]],
+        ["software", ["Who would use it, and what is the main task it needs to solve?", "Which feature would make the biggest difference first?", "Are you starting with an existing system or a new idea?"]],
+        ["security", ["Is there an immediate issue, or are you planning better protection?", "What needs protecting most urgently?", "Which systems are involved?"]],
+        ["relationship", ["Would you like to talk about what happened, or what you need from them now?", "What kind of support would feel helpful from someone close to you?"]],
+        ["time", ["What would fit realistically around your schedule?", "Would a smaller first step make this easier to fit in?"]]
+      ];
+      const contextualQuestion = questionChoices.find(([theme]) => covered.has(theme));
+      if (contextualQuestion) questions = contextualQuestion[1];
+      else if (effectiveMood === "neutral" && focus.type === "goal") questions = [
+        "What would you most like to change?",
+        "Is this about work, learning, or something personal?",
+        "What is getting in the way at the moment?",
+        "What would a good outcome look like for you?"
+      ];
+      if (!contextualQuestion && !negative && focus.type === "goal") {
+        const goalQuestions = {
+          support: ["What would make it easier to begin?", "Which part would you like a hand with?", "What kind of support would be useful right now?"],
+          next: ["What is the first thing you want to tackle?", "What have you tried so far?", "Which part would you start with if it were a little easier?"],
+          meaning: ["What would progress look like in everyday terms?", "Which part of this matters most in your day?", "What would you notice first if things improved?"],
+          goal: ["What would you like to be able to do next?", "Would a small first step feel manageable?", "What would make this feel worth pursuing?"],
+          open: ["Where would you like to start?", "What is the main thing getting in the way?", "Is there a particular task or situation you have in mind?"]
+        };
+        questions = goalQuestions[responseSet.question];
+      }
+      const alreadyAsked = previous && previous.assistant.includes("?");
+      const needsDetail = effectiveMood === "neutral" && !contributions.length && focus.type === "goal";
+      const askNow = !noQuestions && (needsDetail || !alreadyAsked || /\b(?:help|advice|suggest|how|what should)\b/.test(text));
+      // One observation and one invitation are enough; avoid stacking five
+      // generic "I..." paragraphs before returning the conversation to the user.
+      const comments = justListen ? [support] : contributions.length ? contributions : needsDetail ? [] : [thought];
+      if (mixed && !justListen && contributions.length) comments.unshift(thought);
+      const body = [lead, [acknowledgement, continuity].filter(Boolean).join(" "), ...comments, askNow ? chooseFresh(questions) : ""].filter(Boolean).join("\n\n");
+      return {text: body, source: "empathy", topic: "assembled-conversation", responseSet: responseSet.id, caring: true, gentlePromotion: negative || mixed || justListen};
+    }
+
     let alsoAnswered = /* @__PURE__ */ new Set();
     function collectKnowledge(sentences) {
       alsoAnswered = /* @__PURE__ */ new Set();
       const hits = [];
+      // Engine knowledge is opt-in per message. Prior context alone cannot expose it.
+      const requestedEngine = /\b(?:astrix|nova|physics|webgpu|racetrack|race track|endurance run track|lifeforms?|dunes|normadic|furnariscafatigt|skid marks|vehicle rigging|aircraft autorig|procedural locomotion|terrain streaming|givelife|addvehicle|addaircraft|astrix physics|3d engine|game engine|virtual experiences?(?! technology authority)|interactive experience engine|virtual training engine|simulation engine|learning simulation)\b/.test(sentences.map((s) => s.text).join(" "));
+      const availableKnowledge = requestedEngine ? opts.knowledge : opts.knowledge.filter((entry) => !entry.engine);
       const add = (match, at, question = false) => {
         if (!match) return;
         if (hits.some((h) => h.entry.id === match.entry.id)) alsoAnswered.add(Math.round(at));
         else hits.push({ ...match, at, question });
       };
       sentences.forEach((s, i) => {
-        let ranked = rankKnowledge(s.text, opts.knowledge, activeContext());
+        let ranked = rankKnowledge(s.text, availableKnowledge, activeContext());
         if (ranked.some((m) => !m.entry.casual)) ranked = ranked.filter((m) => !m.entry.casual);
         else ranked = ranked.slice(0, 1);
         if (detectMood(s.original).mood !== "neutral") ranked = ranked.filter((m) => !m.entry.casual || m.entry.moodOk);
+        // Resolve short follow-ups against the last answered subject. Engine
+        // entries still require an explicit engine topic in the CURRENT message.
+        if (!ranked.length && /^(?:and |also |but )?(?:tell me more|more about|what about|how (?:much|does|do|can)|(?:what|where|when|why) (?:is|are|does|do)|does it|do they|can it|can they|is it|are they|its (?:cost|price)|pricing|cost)/.test(s.text) && /\b(it|that|this|they|them|those|more|cost|price|pricing)\b/.test(s.text) && s.text.split(" ").length <= 18) {
+          const subjects = lastSubjects.map(id => availableKnowledge.find(e => e.id === id)).filter(e => e && !e.casual);
+          if (subjects.length === 1) {
+            const subject = subjects[0];
+            ranked = rankKnowledge(`${normalize(subject.title || subject.keys[0])} ${s.text}`, availableKnowledge, activeContext()).filter(m => !m.entry.casual);
+          }
+        }
         const top = ranked[0];
         if (!top) return;
         const question = isQuestion(s.original);
-        ranked.slice(0, TOPICS_PER_SENTENCE).filter((m) => m === top || m.score >= top.score * 0.6).forEach((m) => add(m, i + m.score / -100, question));
+        ranked.filter((m) => m === top || m.score >= top.score * 0.6).forEach((m) => add(m, i + m.score / -100, question));
       });
       sentences.forEach((s, i) => {
         if (i === 0 || hits.some((h) => Math.round(h.at) === i) || !/\b(it|that|this|they|them|those)\b/.test(s.text)) return;
-        const combined = rankKnowledge(`${sentences[i - 1].text} ${s.text}`, opts.knowledge, activeContext()).filter((m) => !m.entry.casual);
+        const combined = rankKnowledge(`${sentences[i - 1].text} ${s.text}`, availableKnowledge, activeContext()).filter((m) => !m.entry.casual);
         const fresh = combined.find((m) => !hits.some((h) => h.entry.id === m.entry.id));
         if (fresh) add(fresh, i - 1e-3, isQuestion(s.original));
         else if (combined.length) alsoAnswered.add(i);
@@ -1524,22 +2127,225 @@
     }
     function withBridge(answer, raw, mood) {
       var _a2, _b2;
-      if (!opts.bridge || answer.source === "crisis" || answer.business) return answer;
+      answer = withRelevantActions(answer, raw);
+      if (!opts.bridge || answer.source === "crisis") return answer;
+      // An answer already explaining Beyond AI needs no second promotion.
+      if (/\bbeyond ai\b/i.test(answer.text)) {
+        if (answer.topic === "concern-followup" && /requirements.*Beyond AI team/i.test(answer.text)) {
+          alignment.stage = 3;
+          alignment.lastTurn = state.turn;
+        }
+        if (answer.business || answer.source === "knowledge") {
+          alignment.stage = Math.max(alignment.stage, 2);
+          alignment.lastTurn = state.turn;
+        }
+        return answer;
+      }
       const bridge = opts.bridge({
         text: normalize(raw),
+        concern: focusConcern || concerns.find(c => c.key === activeConcern && c.status === "open" && c.turn === state.turn),
+        alignment,
+        listening,
         source: answer.source,
-        mood: mood.mood,
+        mood: answer.gentlePromotion ? "distressed" : mood.mood,
         profile: state.profile,
         turn: state.turn,
         used: state.bridges,
         random
       });
       if (!bridge) return answer;
+      alignment.stage = bridge.stage || Math.min(3, alignment.stage + 1);
+      alignment.lastTurn = state.turn;
+      if (bridge.service) alignment.service = bridge.service;
       state.bridges.add(bridge.text);
       const actions = [...(_a2 = bridge.actions) != null ? _a2 : [], ...(_b2 = answer.actions) != null ? _b2 : []].filter((a, i, all) => all.findIndex((b) => b.label === a.label) === i);
-      return { ...answer, text: `${answer.text}
-
-${fillAnswer(bridge.text)}`, actions: actions.slice(0, MAX_ACTIONS) };
+      const bridgeText = fillAnswer(bridge.text);
+      if (answer.source !== "knowledge" && answer.source !== "time") {
+        // In ordinary conversation, keep the user's response together and place
+        // the commercial connection at the end, after every concern is addressed.
+        return withRelevantActions({...answer, closingConnection: bridgeText, actions}, raw);
+      }
+      const closing = answer.text.match(/(?:^|\n\n)([^\n]*\?)\s*$/);
+      const main = closing ? answer.text.slice(0, closing.index).trim() : answer.text;
+      return withRelevantActions({ ...answer, text: [main, bridgeText, closing ? closing[1] : ""].filter(Boolean).join("\n\n"), actions }, raw);
+    }
+    function connectReply(answer) {
+      if (answer.source === "crisis" || answer.source === "memory") return answer;
+      // Keep all response components and action buttons. Join prose into a
+      // conversation while retaining the structure of lists and code examples.
+      const blocks = answer.text.trim().split(/\n\s*\n/);
+      const output = [];
+      let prose = [];
+      let inCode = false;
+      const flush = () => { if (prose.length) output.push(prose.join(" ")); prose = []; };
+      for (const block of blocks) {
+        const fences = (block.match(/^\s*```/gm) || []).length;
+        const structured = inCode || fences > 0 || /^(?:\s*(?:[-*+] |\d+[.)] |#{1,6} |>|\|)| {4}\S)/m.test(block);
+        if (structured) {
+          flush(); output.push(block);
+        } else {
+          let text = block.replace(/\s*\n\s*/g, " ").trim();
+          if (prose.length) {
+            if (/^I don't (?:drink|have a drink preference)/.test(text)) {
+              text = "As for drinks, " + text;
+            } else if (/^Being apart from someone close/.test(text)) {
+              text = "And " + text.charAt(0).toLowerCase() + text.slice(1);
+            } else if (/^Affordability should guide/.test(text)) {
+              text = "At the same time, " + text.charAt(0).toLowerCase() + text.slice(1);
+            } else if (/^Your energy matters too\./.test(text)) {
+              text = text.replace(/^Your energy matters too\./, "Your energy matters just as much.");
+            }
+          }
+          if (text) prose.push(text);
+        }
+        if (fences % 2) inCode = !inCode;
+      }
+      flush();
+      return {...answer, text: output.join("\n\n")};
+    }
+    function withBrandClosing(answer, raw, mood) {
+      if (!opts.bridge || answer.source === "crisis" || mood.crisis) return answer;
+      // Direct company/offerings answers already provide the connection.
+      if (answer.source === "knowledge" && (answer.topic || "").split(",").some(topic =>
+        ["what-can-you-do", "services", "products", "about", "help"].includes(topic))) return answer;
+      const text = normalize(raw);
+      const concern = focusConcern || concerns.find(c => c.key === activeConcern && c.status === "open" && c.turn === state.turn);
+      const service = concern && concern.service || concernDomain(text)[2];
+      const low = ["depressed", "distressed", "angry"].includes(mood.mood);
+      const personalConnection = /\b(?:family|brother|sister|mother|father|friend|partner|coffee|tea|movie|film|watched)\b/.test(text);
+      const ordinaryResponse = normalize(answer.text);
+      const responseSubjects = {
+        work: /\b(?:work|task|routine|workload|time|pressure|effort)\b/,
+        learning: /\b(?:learn|learning|skill|skills|practice|experience|curiosity|course)\b/,
+        security: /\b(?:security|protect|protecting|protection|systems|technical)\b/,
+        software: /\b(?:software|technical|features|users|task|application)\b/,
+        business: /\b(?:business|operations|customers|clients|process|work|task)\b/
+      };
+      const connectedService = service && responseSubjects[service] && responseSubjects[service].test(ordinaryResponse) ? service : "";
+      const closingThoughts = {
+  "gentle": [
+    "Sometimes it helps to make the practical side of the day a little easier; Beyond AI builds AI tools and software for that part.",
+    "A little less routine work can leave more room for life. That is one practical use of Beyond AI’s automation services.",
+    "When practical support would be useful, Beyond AI’s tools can help simplify work, leaving the personal side of life its own space.",
+    "Practical help can begin with a single work task. Beyond AI’s AI and software services offer ways to explore that part.",
+    "Beyond AI’s AI and software services focus on practical work; we can explore that part whenever it is relevant."
+  ],
+  "personal": [
+    "Time saved on routine work can become time for the people and interests that matter. That is where Beyond AI’s automation tools can be useful.",
+    "The best tools quietly make room for the rest of life; Beyond AI’s AI and software services bring that practical focus to work.",
+    "Sometimes the useful part of AI is simply having less routine work to carry home. Beyond AI offers practical ways to explore that.",
+    "Less routine work can mean a little more space for your own interests; Beyond AI offers AI and software services for the work side.",
+    "The everyday benefit of a useful tool is often time back. Beyond AI’s automation services are one way businesses can explore that."
+  ],
+  "work": [
+    "A little automation can free up attention for the work that matters; Beyond AI’s AI & Analytics and Software Development services are practical options to explore.",
+    "Beyond AI can help teams look at routine tasks and find opportunities to simplify them with AI and software.",
+    "One repetitive task is often a useful starting point for exploring Beyond AI’s automation services.",
+    "Beyond AI’s AI & Analytics services can help identify where software could take some repetition out of a workflow.",
+    "A clear task is a good starting point for Beyond AI’s Software Development team to explore practical requirements."
+  ],
+  "learning": [
+    "Curiosity goes further with something practical to try; Beyond AI’s AI Education course is one way to take that next step.",
+    "A useful new skill can start small. Beyond AI’s beginner-friendly AI Education course gives practical AI learning a place to begin.",
+    "There is room to start with the basics and build confidence through practice; that is a useful reason to explore Beyond AI’s AI Education course.",
+    "Beyond AI’s AI Education course offers four real-world projects, so there is room to put new ideas into practice.",
+    "Beyond AI’s AI Education course covers the basics without requiring coding experience; a practical exercise can be a useful beginning."
+  ],
+  "security": [
+    "Knowing what needs protecting makes the next step clearer; Beyond AI’s Cyber Security services can help explore the practical requirements.",
+    "Beyond AI’s Cyber Security and Managed Services offer a practical place to start when technology needs more dependable support.",
+    "Protection works best around real requirements, which is a useful starting point for a conversation with Beyond AI’s Cyber Security team.",
+    "Beyond AI offers security monitoring and testing, so protection can be considered around the systems that matter to your business.",
+    "A discussion with Beyond AI’s Cyber Security team can start with the assets, systems and support your business needs."
+  ],
+  "software": [
+    "The useful part is often simple: fewer steps between a task and getting it done. Beyond AI’s Software Development services can help explore a fit.",
+    "Software earns its place when it fits the work people actually do; that is a practical starting point with Beyond AI’s development team.",
+    "Beyond AI builds web, mobile and enterprise software, so a clear everyday need can be the beginning of something useful.",
+    "Beyond AI’s development services can begin with the users, their tasks and the features that would be useful first.",
+    "A web or mobile application is most useful when it solves a clear task; Beyond AI’s software team can explore the requirements."
+  ],
+  "business": [
+    "The right tools leave more room for the people and decisions behind a business; Beyond AI’s products and services offer practical options to explore.",
+    "Beyond AI’s HRM, ERP and Talkora AI support different parts of business operations, so the useful starting point is the task that needs attention.",
+    "A small improvement to an everyday process can make a difference. Beyond AI’s business products and technology services are built around practical needs.",
+    "Beyond AI’s products cover areas such as HR, enterprise planning and business calls, allowing the discussion to start with a particular operational need.",
+    "With Beyond AI’s products and services, a useful first question is which part of the business would benefit from better tools."
+  ],
+  "general": [
+    "A task made easier or a useful new skill can be a good starting point; Beyond AI offers practical AI services, business products and AI Education.",
+    "Beyond AI’s products and services offer ways to make work simpler and build useful skills, starting with what would be helpful in everyday life.",
+    "The practical possibilities are worth exploring: Beyond AI offers AI tools, technology services and an AI Education course for different needs.",
+    "Beyond AI offers several practical starting points, from its AI Education course to business software and technology services.",
+    "Beyond AI offers AI learning, business software and technology services, with different options for different practical needs."
+  ]
+};
+      const lines = low && (listening.noAdvice || !service || personalConnection)
+        ? closingThoughts.gentle
+        : personalConnection && !service ? closingThoughts.personal
+        : closingThoughts[connectedService] || closingThoughts.general;
+      // Product connections are grounded in the existing Beyond AI dataset.
+      // A personal story must not be treated as evidence of a business need.
+      const explicitBusinessNeed = /\b(?:business|work|office|company|team|staff|customers|clients|payroll|attendance|inventory|accounting|sales|calls|callers|learn|learning|course|software|website|security|hacked|cloud|developers|voting)\b/.test(text);
+      const context = explicitBusinessNeed ? text : concern && concern.service && /\b(?:that|this|it|more|next|help|options)\b/.test(text) ? normalize(concern.summary) : "";
+      const connections = [
+        ["talkora", /\b(?:missed calls|too many calls|answer calls|answering calls|business calls|callers|receptionist)\b/, ["A busy day needn't mean unanswered business calls. Talkora AI answers calls and helps manage business conversations.", "Keeping up with business calls can take time; Talkora AI provides voice automation for answering and managing them."]],
+        ["hrm", /\b(?:payroll|attendance|leave management|employee records|human resources|hrm)\b/, ["Keeping employee records, attendance and payroll together can simplify HR work; Beyond AI HRM brings those workflows into one place.", "Beyond AI HRM centralizes employee records, attendance, leave and payroll workflows, reducing the need to juggle them separately."]],
+        ["erp", /\b(?:inventory|accounting|enterprise resource planning|erp|business operations)\b/, ["For connected business operations, Beyond AI ERP offers integrated enterprise resource planning.", "Beyond AI ERP is an option for bringing enterprise planning and operations together; a walkthrough can clarify the relevant modules."]],
+        ["agentic", /\b(?:sales|leads|negotiation|automate sales)\b/, ["Sales follow-ups can take attention from relationships; Beyond AI Agentic AI automates sales and negotiation tasks.", "Beyond AI Agentic AI supports sales automation, leaving the team more room for customer relationships."]],
+        ["education", /\b(?:learn|learning|course|study|studying|skills|education)\b/, ["A practical place to start is Beyond AI's AI Education course: no coding required, with hands-on projects.", "Beyond AI's AI Education course turns the basics into practice through 11 modules and four real-world projects, without requiring coding."]],
+        ["security", /\b(?:security|hacked|breach|phishing|malware|protect)\b/, ["Beyond AI's Cyber Security services cover monitoring, testing and threat intelligence, providing practical options for protecting business systems.", "For business security, Beyond AI offers 24/7 monitoring, penetration testing and threat intelligence."]],
+        ["software", /\b(?:software|website|web app|mobile app|build an app)\b/, ["A useful tool starts with the task it needs to solve. Beyond AI develops web, mobile and enterprise software around business requirements.", "Beyond AI's Software Development services cover web applications, mobile apps and enterprise systems."]],
+        ["cloud", /\b(?:cloud|migration|hosting|infrastructure)\b/, ["Beyond AI's Cloud Services cover migration, management and infrastructure across Microsoft, AWS and Google Cloud.", "For cloud requirements, Beyond AI offers migration and multi-cloud management with a vendor-neutral approach."]],
+        ["managed", /\b(?:it support|helpdesk|help desk|server|network|managed it)\b/, ["Keeping IT running is part of the everyday workload; Beyond AI's Managed Services provide monitoring, helpdesk and server support.", "Beyond AI's Managed Services cover 24/7 infrastructure monitoring, IT helpdesk and server and network management."]],
+        ["augmentation", /\b(?:hire developers|hiring developers|need developers|dedicated team|resource augmentation)\b/, ["Beyond AI's Resource Augmentation adds dedicated IT and engineering professionals through short- or long-term engagements.", "When a project needs more technical capacity, Beyond AI offers on-demand IT and engineering professionals."]],
+        ["count-trust", /\b(?:voting|ballot|election)\b/, ["For organizational voting, Beyond AI Count Trust is a secure, enterprise-grade voting platform.", "Beyond AI Count Trust provides a dedicated platform for voting; the team can explain how it fits the planned process."]]
+      ];
+      const businessContext = /\b(?:business|customers|clients|office|company|work|team|shop|store|receptionist|organization|organisation)\b/.test(context);
+      const responseFit = {
+        talkora: /\b(?:calls|call|business|work|time|routine)\b/,
+        hrm: /\b(?:employee|payroll|attendance|hr|work|routine|task)\b/,
+        erp: /\b(?:operations|inventory|business|work|task)\b/,
+        agentic: /\b(?:sales|business|work|customers|customer|task)\b/,
+        education: responseSubjects.learning,
+        security: responseSubjects.security,
+        software: responseSubjects.software,
+        cloud: /\b(?:cloud|infrastructure|system|systems|technical)\b/,
+        managed: /\b(?:it|technical|support|system|systems|work)\b/,
+        augmentation: /\b(?:team|capacity|project|work|resources)\b/,
+        "count-trust": /\b(?:voting|vote|process|organization|organisation)\b/
+      };
+      const match = context && connections.find(([id, pattern]) => pattern.test(context)
+        && (!["talkora", "count-trust"].includes(id) || businessContext)
+        && responseFit[id].test(ordinaryResponse)
+        && opts.knowledge.some(entry => entry.id === id));
+      const closing = match ? chooseFresh(match[2]) : connectedService && answer.closingConnection || chooseFresh(lines);
+      if (!closing) return answer;
+      if (!match) return {...answer, text: answer.text + "\n\n" + closing};
+      const entry = opts.knowledge.find(e => e.id === match[0]);
+      const action = {label: entry.title || "Explore this option", ask: entry.keys[0]};
+      const actions = [action, ...(answer.actions || [])].filter((a, i, all) => all.findIndex(b => (a.ask || a.href) === (b.ask || b.href) || a.label === b.label) === i);
+      const contact = actions.find(a => a.href === CONTACT_US.href) || CONTACT_US;
+      return {...answer, text: answer.text + "\n\n" + closing, actions: [...actions.filter(a => a.href !== contact.href).slice(0, MAX_ACTIONS - 1), contact]};
+    }
+    function withRelevantActions(answer, raw) {
+      if (answer.source === "crisis") return answer;
+      const concern = focusConcern || concerns.find(c => c.key === activeConcern && c.status === "open" && c.turn === state.turn);
+      const service = concern && concern.service || concernDomain(normalize(raw))[2];
+      const options = {
+        work: [{label: "AI & automation", ask: "Tell me about AI & Analytics"}, {label: "Software services", ask: "Tell me about Software Development"}],
+        learning: [{label: "AI Education", ask: "Tell me about the AI course"}, {label: "Beyond AI services", ask: "What services do you offer?"}],
+        security: [{label: "Cyber Security", ask: "Tell me about Cyber Security"}, {label: "Managed Services", ask: "Tell me about Managed Services"}],
+        software: [{label: "Software Development", ask: "Tell me about Software Development"}, {label: "Beyond AI products", ask: "Tell me about your products"}],
+        business: [{label: "Business products", ask: "Tell me about your products"}, {label: "Beyond AI services", ask: "What services do you offer?"}]
+      };
+      const fallback = [{label: "Beyond AI products", ask: "Tell me about your products"}, {label: "Beyond AI services", ask: "What services do you offer?"}];
+      const suggested = options[service] || fallback;
+      const actions = [...suggested, ...(answer.actions || [])]
+        .filter((action, index, all) => all.findIndex(a => (a.ask || a.href || a.label) === (action.ask || action.href || action.label) || a.label === action.label) === index)
+        .filter(action => action.href !== CONTACT_US.href)
+        .slice(0, MAX_ACTIONS - 1);
+      return {...answer, actions: [...actions, CONTACT_US]};
     }
     function withCare(answer, raw, mood) {
       var _a2, _b2, _c2, _d2;
@@ -1547,6 +2353,10 @@ ${fillAnswer(bridge.text)}`, actions: actions.slice(0, MAX_ACTIONS) };
 
 ${a.outro}` } : a;
       if (!opts.care || answer.source === "crisis") return withOutro(answer);
+      if (answer.caring) {
+        if (["distressed", "depressed", "angry"].includes(mood.mood)) state.lastLowTurn = state.turn;
+        return withOutro(answer);
+      }
       const m = mood.mood;
       const negative = m === "depressed" || m === "distressed" || m === "angry";
       const before = [];
@@ -1587,12 +2397,21 @@ ${a.outro}` } : a;
     }
     function summaryReply() {
       var _a2, _b2, _c2;
-      const parts = describeProfile(state.profile, (_a2 = opts.business) == null ? void 0 : _a2.needLabels);
+      const concernLabels = {
+        workload: "reduce routine work and find a manageable workload",
+        learning: "find a learning path suited to your experience and available time",
+        security: "identify the protection and technical support you need",
+        software: "define useful software features around the task you need to solve",
+        business: "find support for the parts of your business that need attention",
+        relationships: "give attention to family or relationship concerns",
+        personal: "work through your current personal concerns at a comfortable pace"
+      };
+      const parts = [...new Set([...describeProfile(state.profile, (_a2 = opts.business) == null ? void 0 : _a2.needLabels), ...concerns.filter(c => c.status === "open").map(c => concernLabels[c.key]).filter(Boolean)])];
       const who = state.userName ? `${state.userName}, here` : "Here";
-      const text = parts.length ? `${who}'s what I know so far: ${parts.map((p) => `
+      const text = parts.length ? `${who}'s a summary of your needs so far: ${parts.map((p) => `
 - ${p}`).join("")}
 
-Anything you'd like to add or correct?` : "You haven't told me about your business yet. What do you do, and what kind of help are you looking for?";
+You can add or correct anything that doesn't fit.` : "I don't have enough detail to summarize your needs yet. What would you most like help with?";
       return { text, actions: parts.length ? (_c2 = (_b2 = opts.business) == null ? void 0 : _b2.summaryActions) == null ? void 0 : _c2.call(_b2, parts) : void 0, source: "knowledge", topic: "summary" };
     }
     function withMood(lead, mood, body, { always = false, acknowledge = true } = {}) {
@@ -1628,6 +2447,19 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
     };
   }
   var NOT_NAMES = /* @__PURE__ */ new Set(["not", "a", "an", "the", "just", "so", "very", "here", "sad", "happy", "angry", "tired", "fine", "ok", "okay"]);
+  function readIntroduction(raw) {
+    // Use the original text for Unicode names and preserve the remaining clause.
+    const match = raw.match(/^(?:hi[,! ]+|hello[,! ]+|actually[, ]+|no[, ]+|please |remember (?:that )?)?(?:my name is|my name's|call me|i am called|i'm|i am)\s+([\p{L}][\p{L}'’-]*(?:[ \t]+[\p{L}][\p{L}'’-]*){0,3})(.*)$/iu);
+    if (!match) return null;
+    let name = match[1];
+    let rest = match[2];
+    const boundary = name.search(/\s+(?:and|but|so|from|working|looking|what|how|can|please|i|we)\b/i);
+    if (boundary >= 0) { rest = name.slice(boundary) + rest; name = name.slice(0, boundary); }
+    if (name.split(/\s+/).some(w => NOT_NAMES.has(w.toLowerCase()) || /^(?:feeling|interested|having|going|worried|anxious|depressed|sorry|trying|excited|glad|not|in|at|a|an|engineer|student|teacher|developer|business|owner|years|old)$/i.test(w))) return null;
+    // Bare "I am" can describe a role or feeling; accept a capitalized name only.
+    if (/^(?:i'm|i am)\b/i.test(raw) && !/^\p{Lu}/u.test(name)) return null;
+    return { name: name.split(/\s+/).map(w => w[0].toLocaleUpperCase() + w.slice(1)).join(" "), rest: rest.replace(/^[\s,;.!]+|^\s*(?:and|but|so)\s+/gi, "").trim() };
+  }
   function extractName(text) {
     const m = text.match(/\b(?:my name is|call me|i am called|my name s|name is)\s+([a-z][a-z-]*)/);
     if (!m || NOT_NAMES.has(m[1])) return void 0;
@@ -1713,7 +2545,12 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
       id: "what-can-you-do",
       casual: true,
       keys: ["what can you do", "what do you know", "how can you help", "what are you for", "what are you good at", "your capabilities"],
-      answers: ["I can answer questions about our company, chat about your day, listen when something's bothering you, tell you the time, and even tell a joke. What would you like?"]
+      answers: ["Beyond AI offers AI & Analytics, Cloud Services, Cyber Security, Software Development, Managed Services and Resource Augmentation. Its products include Beyond AI HRM, ERP, Count Trust, Agentic AI and Talkora AI, alongside a practical AI Education course. Which area would be useful for your work or business?"],
+      actions: [
+        {label: "Beyond AI products", ask: "Tell me about your products"},
+        {label: "Beyond AI services", ask: "What services do you offer?"},
+        {label: "AI Education", ask: "Tell me about the AI course"}
+      ]
     },
     // ---------- favourites ----------
     {
@@ -8802,7 +9639,7 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
             "you remembered my name {phrase}",
             "you called my name {phrase}",
             "you asked for me {phrase}",
-            "I am listening {phrase}",
+            "Take your time; there is no pressure to explain everything at once.",
             "I am here {phrase}",
             "I heard you call {phrase}",
             "you summoned me {phrase}"
@@ -8906,7 +9743,7 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
     "Please tell me more about {phrase} 🤔",
     "Do you wish to discuss {phrase} 🤔",
     "Can you ask something else about {phrase}. ❓",
-    "Hey, I'm listening about {phrase}? 👂",
+    "What would be useful to talk through next?",
     "I didn't quite catch that. Could you please rephrase {phrase}? 🤔",
     "I'm not sure I understand {phrase}. Can you provide more context or ask a different question? 🧐",
     "Hmm, that's a bit confusing about {phrase}. Could you try asking in a different way? 🤨",
@@ -9214,14 +10051,13 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
   ];
 
   // presets/beyondai.js
-  var SITE = ""; // same-origin links, so they work on previews and stay in the tab
+  var SITE = "https://beyondai.ph";
   var BEYOND_AI = {
     name: "Beyond AI",
     email: "sakib@beyondai.ph",
-    // The site shows "+44 7512 549837" but its Call Us button dials +1 312 877 3570.
-    // Set the correct number here once confirmed; Via won't mention a phone number while this is empty.
-    phone: "",
-    phoneHref: "",
+    // Published contact number on the new BeyondAi website.
+    phone: "+44 7512 549837",
+    phoneHref: "tel:+447512549837",
     contactPage: `${SITE}/contact`,
     linkedin: "https://www.linkedin.com/company/beyond_ai.manila/",
     facebook: "https://www.facebook.com/share/1DHSg7tWwR/"
@@ -9229,7 +10065,7 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
   var MAIL = `[${BEYOND_AI.email}](mailto:${BEYOND_AI.email})`;
   var CONTACT = `[contact page](${BEYOND_AI.contactPage})`;
   var CALL = BEYOND_AI.phone ? ` or call [${BEYOND_AI.phone}](${BEYOND_AI.phoneHref})` : "";
-  var REACH = `email ${MAIL}${CALL}, or use the ${CONTACT} (they reply within 24 hours)`;
+  var REACH = `email ${MAIL}${CALL}, or use the ${CONTACT} (the team aims to reply within 24 hours)`;
   var CONTACT_US = { label: "Contact Beyond AI", href: BEYOND_AI.contactPage };
   var ASK = (label, ask = label) => ({ label, ask });
   var PAGE = (label, path) => ({ label, href: `${SITE}${path}` });
@@ -9279,51 +10115,59 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
       id: "about",
       title: "who we are",
       keys: ["who are you", "about you", "about beyond ai", "what is beyond ai", "who is beyond ai", "beyond ai", "beyondai", "your company", "tell me about beyond ai", "what do you do", "company"],
-      answer: "**Beyond AI** helps businesses scale with intelligent, secure, AI-driven solutions: end-to-end **AI, Cloud, Cybersecurity and Endpoint** technologies.\n\nOur three core pillars are a cloud-native platform, enterprise AI expertise, and vendor-neutral multi-cloud across Microsoft, AWS and Google Cloud. Our website lists 5000+ employees, 85,000 projects, 5 countries and 15+ years of experience.",
-      actions: [ASK("What services do you offer?"), ASK("Why Beyond AI?"), PAGE("Back to the homepage", "/")]
+      answer: "**Beyond AI** is based in **Clark, Philippines**, delivering AI, cloud, cybersecurity and enterprise software. It offers five products, six service pillars and practical AI education. Its cloud solutions span Microsoft Azure, AWS and Google Cloud.",
+      actions: [ASK("What services do you offer?"), ASK("Why Beyond AI?"), PAGE("Visit beyondai.ph", "/")]
     },
     {
       id: "why",
       title: "why Beyond AI",
       keys: ["why beyond ai", "why choose", "why should", "different", "difference", "benefits", "advantages", "better than", "competitors", "trust you"],
-      answer: "Here's what sets Beyond AI apart:\n- **Enterprise-grade talent and proprietary IP**\n- **High-compliance, certified delivery:** ISO 27001, SOC 2 and CMMI certified\n- **Agile global delivery:** delivery centers in Dhaka, Manila and Eastern Europe for 24/7 support\n- **Vendor-neutral multi-cloud:** Microsoft Partner, AWS Certified and Google Cloud Partner\n- **Self-funded operations** for strategic control\n\nOn average, clients see 50% faster deployment and 40% cost reduction (as stated on our services page).",
+      answer: "Beyond AI builds its own products, designs security into its services and selects cloud platforms to fit each project. Teams can combine software, cloud, managed IT and AI education around their needs.",
       actions: [ASK("How do you work?"), CONTACT_US]
     },
     {
       id: "locations",
       title: "where we are",
       keys: ["where are you", "where are you located", "located", "location", "offices", "office", "address", "where are you based", "countries", "headquarters", "hq"],
-      answer: "Beyond AI works across **New York, Austin TX, Manila, Dhaka and Switzerland**, with delivery centers in Dhaka, Manila and Eastern Europe. Our global office is in **Manila, Philippines**, where it's {hubTime} right now. We're remote-first and available worldwide.",
+      answer: "Beyond AI is based in **Clark, Central Luzon, Philippines**, serving Metro Manila, the Philippines and international clients. Meetings use Philippine Standard Time (UTC+8, Asia/Manila). It's {hubTime} there now.",
       actions: [CONTACT_US]
     },
     {
       id: "leadership",
       title: "our leadership",
-      keys: ["leadership", "board", "board of directors", "directors", "president", "ceo", "founder", "owner", "who runs", "management team", "ronald vergara"],
-      answer: "Beyond AI's leadership includes:\n- **Ronald Vergara, President:** 25+ years of experience, founder of Beyond-AI.io, leads AI automation and agentic systems\n- **MD. Naimul Hasan Durjay, Deputy Director:** oversees IT operations, product execution and sales strategy\n- **Jeffrey Arcamo Bernaldez, Director, Philippines Relations**\n\nThe board also includes Muhammad Monir Hossain, Stacey Michelon, Christopher French and Abdulgani Macatoman.",
+      keys: ["leadership", "board", "board of directors", "directors", "president", "ceo", "founder", "owner", "who runs", "management team", "executive team", "executives", "leadership team"],
+      answer: "Beyond AI's leadership includes **Ronald Vergara, President**, **MD Naimul Hasan Durjay, Deputy Director**, and **Christopher French**, VALRPro co-founder.\n\nBoard members: **Muhammad Monir Hossain**, **Stacey Michelon** and **Abdulgani Macatoman**.",
       actions: [PAGE("Board of directors", "/board-of-directors")]
     },
     {
       id: "compliance",
       title: "certifications and partners",
       keys: ["iso", "iso 27001", "soc 2", "soc2", "cmmi", "certified", "certification", "certifications", "compliance", "compliant", "partner", "partners", "microsoft", "aws", "google cloud", "azure"],
-      answer: "Beyond AI delivers to high-compliance standards: **ISO 27001, SOC 2 and CMMI certified**. We're a **Microsoft Partner**, **AWS Certified** and a **Google Cloud Partner**, and we design vendor-neutral solutions across all three clouds.",
+      answer: "Beyond AI designs for security, responsible data handling and compliance requirements. Its cloud work spans **Microsoft Azure, AWS and Google Cloud**. Ask the team for current certification evidence and project-specific requirements.",
       actions: [ASK("Cyber Security"), CONTACT_US]
     },
+    // Company data reviewed against beyondai.ph on 2026-10-20.
+    {"id": "ronald-vergara", "title": "Ronald Vergara", "keys": ["ronald vergara", "ronald"], "answer": "**Ronald Vergara — President.** Founder of Beyond-AI.io and co-founder and CMO of VALRPro; works on AI automation, agentic systems and enterprise web solutions.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
+    {"id": "naimul-durjay", "title": "MD Naimul Hasan Durjay", "keys": ["md naimul hasan durjay", "naimul hasan", "naimul", "durjay", "deputy director"], "answer": "**MD Naimul Hasan Durjay — Deputy Director.** Oversees IT operations, product execution and sales strategy.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
+    {"id": "monir-hossain", "title": "Muhammad Monir Hossain", "keys": ["muhammad monir hossain", "mohammad monir hossain", "monir", "hossain", "betopia"], "answer": "**Muhammad Monir Hossain — Board member.** Founder and Chairman of Betopia Group.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
+    {"id": "stacey-michelon", "title": "Stacey Michelon", "keys": ["stacey michelon", "stacey", "michelon"], "answer": "**Stacey Michelon — Board member.** Founder of Veterans Advocate Center and co-founder of VALRPro; hosts the “You Served, You Deserve” podcast.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
+    {"id": "christopher-french", "title": "Christopher French", "keys": ["christopher french", "chris french", "christopher"], "answer": "**Christopher French — Executive team.** VALRPro co-founder, former serviceman and veteran advocate.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
+    {"id": "abdulgani-macatoman", "title": "Abdulgani Macatoman", "keys": ["abdulgani macatoman", "abdulgani", "macatoman"], "answer": "**Abdulgani Macatoman — Board member.** Former DTI Undersecretary and former Acting Secretary of the Commission on Filipinos Overseas.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
+    {"id": "governance", "title": "governance principles", "keys": ["governance", "governance policy", "governance principles"], "answer": "Beyond AI emphasizes innovation, client needs, quality, transparency, data security and sustainable growth.", "actions": [{"label": "Leadership & board", "href": "https://beyondai.ph/board-of-directors"}]},
     // ---------- services ----------
     {
       id: "services",
       title: "our services",
       overview: true,
-      keys: ["services", "service", "offer", "what can you do", "what do you offer", "solutions", "help with", "our services"],
-      answer: "Beyond AI offers six services:\n- **Cloud Services:** migration, multi-cloud management, infrastructure design\n- **AI & Analytics:** machine learning, natural language processing, computer vision\n- **Cyber Security:** 24/7 SOC monitoring, penetration testing, threat intelligence\n- **Software Development:** web and mobile apps, enterprise software\n- **Managed Services:** 24/7 monitoring, IT helpdesk, server and network management\n- **Resource Augmentation:** dedicated IT and engineering professionals\n\nWhich one would you like to know more about?",
+      keys: ["services", "service", "offer", "what can you do", "what do you know", "how can you help", "what are you for", "what are you good at", "your capabilities", "what do you offer", "solutions", "help with", "our services"],
+      answer: "Beyond AI offers six services: **Cloud Modernization**, **AI & Analytics**, **Cybersecurity & Compliance**, **Software Development**, **Managed Services** and **Resource Augmentation**. Which area would you like to explore?",
       actions: [ASK("AI & Analytics"), ASK("Cloud Services"), ASK("Cyber Security"), ASK("Software Development")]
     },
     {
       id: "cloud",
-      title: "Cloud Services",
+      title: "Cloud Modernization",
       keys: ["cloud", "cloud services", "cloud migration", "migrate", "migration", "multi cloud", "multicloud", "serverless", "infrastructure", "hosting", "cloud modernization"],
-      answer: "**Cloud Services:** scalable, secure and cost-effective cloud solutions that enable faster innovation. Capabilities include:\n- Cloud migration\n- Multi-cloud management\n- Cloud infrastructure design\n- Serverless architecture\n- Cloud security and compliance\n\nWe're vendor-neutral across Microsoft, AWS and Google Cloud.",
+      answer: "**Cloud Modernization** covers cloud migration, multi-cloud management and infrastructure design across Microsoft Azure, AWS and Google Cloud. Ask the team about your infrastructure and migration goals.",
       actions: [PAGE("See services", "/services"), CONTACT_US]
     },
     {
@@ -9335,16 +10179,16 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
     },
     {
       id: "security",
-      title: "Cyber Security",
-      keys: ["cyber security", "cybersecurity", "security", "secure", "soc", "penetration testing", "pen test", "pentest", "threat intelligence", "hacked", "breach", "ransomware", "phishing", "malware", "vulnerability", "audit", "endpoint"],
-      answer: "**Cyber Security:** we protect your digital assets and keep you compliant, with:\n- 24/7 security monitoring (SOC)\n- Penetration testing and audits\n- Threat intelligence\n\nOur delivery is ISO 27001, SOC 2 and CMMI certified.",
+      title: "Cybersecurity & Compliance",
+      keys: ["cybersecurity and compliance", "cybersecurity compliance", "cyber security", "cybersecurity", "security", "secure", "soc", "penetration testing", "pen test", "pentest", "threat intelligence", "hacked", "breach", "ransomware", "phishing", "malware", "vulnerability", "audit", "endpoint"],
+      answer: "**Cybersecurity & Compliance:** security monitoring, penetration testing, threat intelligence, incident response and compliance support. Contact the team to define the systems, controls and coverage you need.",
       actions: [PAGE("See services", "/services"), CONTACT_US]
     },
     {
       id: "software",
       title: "Software Development",
       keys: ["software development", "develop", "developer", "build an app", "build a website", "app development", "mobile app", "ios", "android", "web app", "web application", "website", "custom software", "enterprise software", "app idea", "build"],
-      answer: "**Software Development:** from idea to deployment, we build:\n- Custom web applications\n- Mobile apps for iOS and Android\n- Enterprise software solutions\n\nWe've built 22+ apps (including VALRPRO, Tastehub, Prime Pilates, Bookatable and Nutra AI) and many client websites.",
+      answer: "**Software Development:** custom web, mobile and enterprise applications, from planning to deployment. The portfolio lists **22 apps and 10 websites**, including Prime Pilates, SwiftSwap and Dudu Car Malaysia.",
       actions: [ASK("Show me your work"), CONTACT_US]
     },
     {
@@ -9367,57 +10211,57 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
       title: "our products",
       overview: true,
       keys: ["products", "product", "software products", "platforms", "tools", "your software", "saas"],
-      answer: "Beyond AI's products:\n- **Beyond AI HRM:** smart HR for modern organizations (most popular)\n- **Beyond AI ERP:** fully integrated enterprise resource planning (new)\n- **Beyond AI Count Trust:** a secure, enterprise-grade voting platform\n- **Beyond AI Agentic AI:** an AI agent that automates sales and negotiation\n- **Talkora AI:** voice automation that answers and manages your business calls\n\nAll built for enterprise: 1000+ integrations, a 99.9% uptime SLA, 256-bit encryption and an open API.",
-      actions: [ASK("Beyond AI HRM"), ASK("Talkora AI"), ASK("Agentic AI"), PAGE("See products", "/product")]
+      answer: "Beyond AI offers five products:\n- **HRM Software:** employee information and HR workflows\n- **ERP:** connected business operations\n- **Count Trust:** organizational elections\n- **Talkora AI:** business call automation\n- **Agentic AI:** sales and customer engagement automation\n\nAsk the team for a product walkthrough.",
+      actions: [ASK("Beyond AI HRM"), ASK("Talkora AI"), ASK("Agentic AI"), PAGE("See products", "/products")]
     },
     {
       id: "hrm",
       title: "Beyond AI HRM",
-      keys: ["hrm", "hr software", "hr system", "human resources", "payroll", "attendance", "leave management", "employee database", "performance reviews", "recruitment", "onboarding software", "hris"],
-      answer: "**Beyond AI HRM: smart HR for modern organizations** (our most popular product). It centralizes employee records, roles, attendance, leave, payroll readiness, performance and analytics:\n- Employee database and profiles\n- Payroll processing and tax calculations\n- Attendance and leave management\n- Performance reviews and goal tracking\n- Recruitment and onboarding workflows\n- Training and development programs",
-      actions: [PAGE("See products", "/product"), CONTACT_US]
+      keys: ["tell me about hrm", "beyond ai hrm", "what is hrm", "hrm", "hr software", "hr system", "human resources", "payroll", "attendance", "leave management", "employee database", "performance reviews", "recruitment", "onboarding software", "hris"],
+      answer: "**Beyond AI HRM Software** brings employee records, attendance, leave, payroll preparation and performance into one secure system. Ask for a demo tailored to your HR workflow.",
+      actions: [PAGE("See products", "/products"), CONTACT_US]
     },
     {
       id: "erp",
       title: "Beyond AI ERP",
-      keys: ["erp", "enterprise resource planning", "inventory", "accounting system", "operations system"],
-      answer: "**Beyond AI ERP** (new) is a fully integrated enterprise resource planning system. For a walkthrough of its modules and how it fits your operations, the team can give you a demo.",
-      actions: [PAGE("See products", "/product"), CONTACT_US]
+      keys: ["tell me about erp", "beyond ai erp", "what is erp", "erp", "enterprise resource planning", "inventory", "accounting system", "operations system"],
+      answer: "**Beyond AI ERP** uses the **Odoo framework** to connect business operations. It supports synchronized data, configurable workflows and reports, mobile access and role-based controls.",
+      actions: [PAGE("See products", "/products"), CONTACT_US]
     },
     {
       id: "count-trust",
       title: "Beyond AI Count Trust",
       keys: ["count trust", "counttrust", "voting", "vote", "election", "elections", "ballot", "polling"],
-      answer: "**Beyond AI Count Trust** is a secure, enterprise-grade voting platform. Tell the team about the kind of vote or election you're running and they'll walk you through it.",
-      actions: [PAGE("See products", "/product"), CONTACT_US]
+      answer: "**Beyond AI Count Trust** supports organizational elections, from registering voters to publishing transparent live results. Ask the team to demonstrate it for your voting process.",
+      actions: [PAGE("See products", "/products"), CONTACT_US]
     },
     {
       id: "agentic",
       title: "Beyond AI Agentic AI",
       keys: ["agentic", "agentic ai", "ai agent", "ai agents", "sales automation", "automate sales", "negotiation", "sales ai", "automation", "automate"],
-      answer: "**Beyond AI Agentic AI** is an AI-powered agent that automates sales, negotiation and more, so your team can focus on closing and relationships. Ask the team for a demo with your own sales process.",
-      actions: [PAGE("See products", "/product"), CONTACT_US]
+      answer: "**Beyond AI Agentic AI** automates sales, negotiation and customer engagement, including first contact and follow-up. Ask for a walkthrough using your sales workflow.",
+      actions: [PAGE("See products", "/products"), CONTACT_US]
     },
     {
       id: "talkora",
       title: "Talkora AI",
       keys: ["talkora", "voice ai", "voice automation", "voice bot", "phone bot", "answer calls", "answering calls", "call answering", "receptionist", "ivr", "too many calls", "missed calls"],
-      answer: "**Talkora AI** is voice automation: AI that answers calls, understands your callers and helps manage your business conversations, so calls don't go unanswered.",
-      actions: [PAGE("See products", "/product"), CONTACT_US]
+      answer: "**Talkora AI** is a voice assistant that answers, understands and manages business calls around the clock. Contact the team for a demonstration.",
+      actions: [PAGE("See products", "/products"), CONTACT_US]
     },
     {
       id: "trial",
       title: "free trial",
       keys: ["free trial", "trial", "try it", "demo", "test it", "try your product"],
-      answer: `Our product page invites you to start a free trial. For trial details or a live demo, ${REACH}.`,
-      actions: [CONTACT_US, PAGE("See products", "/product")]
+      answer: "Contact Beyond AI to request a product demo and confirm current trial availability, eligibility and terms.",
+      actions: [CONTACT_US, PAGE("See products", "/products")]
     },
     {
       id: "integrations",
       title: "integrations and uptime",
       keys: ["integrations", "integrate", "integration", "api", "uptime", "sla", "encryption", "reliability", "availability"],
-      answer: "Beyond AI products offer **1000+ integrations**, an **open API**, a **99.9% uptime SLA** and **256-bit, bank-level encryption**.",
-      actions: [PAGE("See products", "/product"), CONTACT_US]
+      answer: "Beyond AI can discuss product integration, hosting and support requirements. Ask the team to confirm supported APIs, integration options, encryption controls and any uptime SLA for the product and plan you need.",
+      actions: [PAGE("See products", "/products"), CONTACT_US]
     },
     // ---------- AI Education ----------
     {
@@ -9425,14 +10269,14 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
       title: "the AI Education course",
       skipIf: ["learn-ai", "enroll", "certificate"],
       keys: ["ai education", "ai course", "ai class", "ai training", "course", "courses", "class", "classes", "training", "learn ai", "study ai", "bootcamp", "curriculum", "syllabus", "modules", "lessons", "no coding"],
-      answer: "**AI Education: no coding required.** 11 comprehensive modules, 4 real-world projects and a certificate of completion, with zero coding experience needed.\n\nYou'll cover machine learning, deep learning, NLP, LLMs, generative AI and AI agents, plus responsible AI (bias, privacy and safe use). Projects:\n- A prompt system with an evaluation checklist\n- A text classification demo\n- A knowledge Q&A prototype (RAG)\n- Capstone: an agent-style workflow (plan, execute, verify, report)\n\nIt's designed for students and graduates, professionals in any field, career switchers, managers and founders, and creators and marketers. 2,400+ learners have enrolled.",
+      answer: "**AI Education: no coding required.** 11 comprehensive modules, 4 real-world projects and a certificate of completion, with zero coding experience needed.\n\nYou'll cover machine learning, deep learning, NLP, LLMs, generative AI and AI agents, plus responsible AI (bias, privacy and safe use). Projects:\n- A prompt system with an evaluation checklist\n- A text classification demo\n- A knowledge Q&A prototype (RAG)\n- Capstone: an agent-style workflow (plan, execute, verify, report)\n\nIt's designed for students and graduates, professionals in any field, career switchers, managers and founders, and creators and marketers.",
       actions: [{ label: "Get started", href: `${SITE}/ai-education` }, ASK("How do I enroll?")]
     },
     {
       id: "enroll",
       title: "enrolling in the course",
       keys: ["enroll", "enrol", "enrollment", "sign up for the course", "join the course", "register", "registration", "how much is the course", "course fee", "tuition", "schedule of classes", "when does the course start", "course schedule", "class schedule", "weekend classes", "weekend class", "evening classes", "online classes", "is it online", "face to face", "how long is the course", "course duration"],
-      answer: `The website doesn't list the course fee, schedule (like weekend or evening classes) or format yet, so the team is the best one to ask. Use the ${CONTACT} and choose **Course Enquiry**, or email ${MAIL}. You can also ask for the free syllabus.`,
+      answer: "Ask Beyond AI about the next AI Education intake, fees, course format and full syllabus through the contact page or sakib@beyondai.ph.",
       actions: [CONTACT_US]
     },
     {
@@ -9446,7 +10290,7 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
       id: "corporate-training",
       title: "team training",
       keys: ["corporate training", "team training", "train my team", "train our team", "train employees", "workshop", "upskill", "upskilling"],
-      answer: `Beyond AI offers corporate and team AI training. Use the ${CONTACT} and choose **Corporate / Team Training**, or email ${MAIL}, and the team will tailor it to your people.`,
+      answer: "Beyond AI offers team AI training. Tell the team your group size, goals and preferred schedule through the contact page or sakib@beyondai.ph.",
       actions: [CONTACT_US]
     },
     // ---------- working with Beyond AI ----------
@@ -9454,42 +10298,42 @@ Anything you'd like to add or correct?` : "You haven't told me about your busine
       id: "process",
       title: "how we work",
       keys: ["how do you work", "how does it work", "how it works", "process", "steps", "get started", "getting started", "onboarding", "next steps", "what happens", "methodology", "approach"],
-      answer: "Our proven 6-step delivery process:\n- **Discovery and consultation:** needs assessment, technology audit, stakeholder alignment\n- **Strategy and roadmap:** a clear roadmap, timeline and measurable KPIs\n- **Design and architecture:** vendor-neutral across Microsoft, AWS and Google Cloud\n- **Build and implement:** with minimal disruption to your operations\n- **Test and validate:** QA, security audits and performance testing\n- **Launch and optimize:** real-time monitoring and 24/7 support\n\n100% transparent, with no surprise costs.",
+      answer: "Beyond AI follows six delivery steps: **Discovery and consultation \u2192 Strategy and roadmap \u2192 Design and architecture \u2192 Build and implement \u2192 Test and validate \u2192 Launch and optimize**. The team defines requirements, timelines and success measures with you.",
       actions: [CONTACT_US]
     },
     {
       id: "pricing",
       title: "pricing",
       keys: ["price", "prices", "pricing", "cost", "costs", "how much", "rates", "rate", "fees", "fee", "budget", "quote", "quotation", "expensive", "cheap", "affordable", "monthly", "per hour", "hourly", "subscription", "plans"],
-      answer: `Pricing depends on what you need, so it isn't listed on the website. Our products are "built for enterprise, priced for everyone", and our process is fully transparent with no surprise costs. For a quote, ${REACH}.`,
+      answer: "Contact Beyond AI for a quote based on your scope, product and support needs. Ask the team to confirm current pricing and plan terms.",
       actions: [CONTACT_US, ASK("How do you work?")]
     },
     {
       id: "timeline",
       title: "timelines",
       keys: ["how long", "timeline", "how fast", "how soon", "when can you start", "deadline", "turnaround", "duration"],
-      answer: "It depends on the project. Every engagement starts with discovery, then a roadmap with a clear timeline and measurable KPIs. On average, clients see 50% faster deployment (as stated on our services page).",
+      answer: "Project timing depends on scope. Beyond AI starts with discovery, then agrees a roadmap, timeline and measurable goals. Contact the team with your requirements and preferred launch date.",
       actions: [ASK("How do you work?"), CONTACT_US]
     },
     {
       id: "portfolio",
       title: "our work",
       keys: ["portfolio", "your work", "show me your work", "previous work", "past projects", "case studies", "case study", "examples", "clients", "apps you built", "references", "projects"],
-      answer: "We've built 22+ apps, including VALRPRO, Tastehub, Prime Pilates, Bookatable, SwiftSwap, Dudu Car Malaysia, Prism Sports, Med World and Nutra AI. We've also built client websites like sendagift.shop, kitfix.com and bloomvits.nl, across fitness, finance, food, transportation and more.",
-      actions: [PAGE("See our work", "/"), CONTACT_US]
+      answer: "Beyond AI lists **32 portfolio projects: 22 apps and 10 websites**. Examples include VALRPRO, Prime Pilates, SwiftSwap, Dudu Car Malaysia and My Tracks, plus websites for Kitfix, Veralosso, Bloomvits and Dermexia. Some projects have live store links; others show that a listing is unavailable.",
+      actions: [PAGE("See our work", "/portfolio"), CONTACT_US]
     },
     {
       id: "results",
       title: "results",
       keys: ["results", "roi", "return on investment", "save money", "cost reduction", "faster", "efficiency", "outcomes"],
-      answer: "Our services page states that clients achieve **50% faster deployment** and **40% cost reduction** on average, with 24/7 expert support.",
+      answer: "Beyond AI agrees project goals and measurable KPIs during discovery and planning. Ask the team for relevant case studies and expected outcomes for your requirements.",
       actions: [CONTACT_US]
     },
     {
       id: "support",
       title: "support",
       keys: ["technical support", "tech support", "customer support", "24 7", "24/7", "help desk support", "support team", "report a bug", "your product is not working"],
-      answer: `Beyond AI provides 24/7 expert support. For technical support, use the ${CONTACT} and choose **Technical Support**, or email ${MAIL}.`,
+      answer: "For technical support, contact Beyond AI through its contact page or sakib@beyondai.ph. Confirm the support coverage and response terms for your service or product.",
       actions: [CONTACT_US]
     },
     // ---------- AI and tech, in plain language (always tied back to how Beyond AI helps) ----------
@@ -9563,7 +10407,7 @@ For businesses, Beyond AI's **Managed Services** team provides 24/7 monitoring a
       id: "contact",
       title: "how to reach us",
       keys: ["contact", "email", "e mail", "phone", "phone number", "call", "call you", "reach", "talk to someone", "talk to a person", "talk to a human", "human", "real person", "representative", "sales team", "speak to", "linkedin", "facebook", "social media"],
-      answer: `You can ${REACH}. You'll also find us on [LinkedIn](${BEYOND_AI.linkedin}) and [Facebook](${BEYOND_AI.facebook}). It's {hubTime} in Manila right now.`,
+      answer: `You can ${REACH}. You'll also find us on [LinkedIn](${BEYOND_AI.linkedin}) and [Facebook](${BEYOND_AI.facebook}). It's {hubTime} in Clark, Philippines right now.`,
       actions: [CONTACT_US]
     },
     {
@@ -9664,8 +10508,8 @@ For businesses, Beyond AI's **Managed Services** team provides 24/7 monitoring a
     {
       when: (t) => /\b(exam|exams|school|study|studying|student|teacher|teach|homework|thesis|graduat|career|job hunting|looking for a job|new skill|learn|course|bored)\b/.test(t),
       lines: [
-        "By the way, if you'd ever like to learn something new, our **AI Education** course teaches practical AI with no coding needed. It could be a great boost for your studies or career!",
-        "If you're into learning, you might love our **AI Education** course. It's beginner-friendly and comes with a certificate."
+        "If you want to build on that interest, Beyond AI offers a practical **AI Education** course with no coding needed.",
+        "For learning something new, Beyond AI's beginner-friendly **AI Education** course is another option I can explain."
       ],
       actions: [TALK("Tell me about the AI course")]
     },
@@ -9687,44 +10531,73 @@ For businesses, Beyond AI's **Managed Services** team provides 24/7 monitoring a
     {
       when: (t) => /\b(phone|computer|laptop|hacked|password|scam|virus|internet|app|website|online)\b/.test(t),
       lines: [
-        "Speaking of tech, keeping things safe and running smoothly is what our **Cyber Security** and **Managed Services** teams do every day."
+        "Beyond AI also offers **Cyber Security** and **Managed Services** to help keep technology secure and running smoothly."
       ],
       actions: [TALK("Tell me about Cyber Security")]
     }
   ];
   var SOFT_BRIDGES = [
-    "Take all the time you need. Whenever you're ready, I'm also here to help with anything Beyond AI can do for you.",
-    "I'm here for you. And if there's ever anything I can help you with, from learning AI to support for your work, just let me know."
+    "I'm also here to guide you through Beyond AI's products and services whenever you're ready. We can stay with what's on your mind for now.",
+    "Beyond AI's products, services and AI Education course are here to explore at your pace; there's no need to change the subject right now.",
+    "As Beyond AI's assistant, I can help with our products and services too. For now, let's give what you've shared the attention it deserves.",
+    "If practical help with work or learning becomes useful, I can explain Beyond AI's services and AI Education course. We can take this conversation at your pace."
   ];
   var GENERAL_BRIDGES = [
-    "By the way, I'm Beyond AI's assistant, so if you're ever curious how AI, cloud or cybersecurity could help you or your business, I'd love to show you.",
-    "Whenever you're ready, I can also tell you about Beyond AI's services, our products like Talkora AI and Beyond AI HRM, or our AI Education course.",
-    "Fun fact about me: I'm part of Beyond AI, and we help businesses grow with AI, cloud and cybersecurity. Ask me anything about it!",
-    "If you have a project in mind, even a small one, I'd be happy to point you to the right Beyond AI team.",
-    "And if you'd like to see what Beyond AI has built, from 22+ apps to AI products, just ask!",
-    "Is there anything I can help you with today? I know all about Beyond AI's services, products and courses.",
-    "If you ever need a hand with tech, from apps to AI to keeping your data safe, Beyond AI is here for you.",
-    "Curious about AI? I'd be happy to share how Beyond AI helps people and businesses use it."
+    "Beyond AI offers practical ways to simplify work with AI, software and cloud services.",
+    "For business operations, Beyond AI's products include HRM, ERP and Talkora AI.",
+    "For learning something new, Beyond AI's AI Education course introduces practical AI without requiring coding.",
+    "A project can start with one useful task; Beyond AI develops web, mobile and enterprise software.",
+    "Beyond AI combines business products, technology services and practical AI education for different needs."
   ];
-  function viaBridge({ text, mood, used, random }) {
-    const fresh = (lines) => {
-      const unused = lines.filter((l) => !used.has(l));
-      if (unused.length) return unused;
-      lines.forEach((l) => used.delete(l));
-      return lines;
+  function viaBridge({ text, mood, used, random, concern, alignment, listening, turn, source }) {
+    // A useful conversation leads the introduction: understand, relate, explain,
+    // then offer a next step. Memory questions are answered without a sales detour.
+    if (source === "memory" || !turn) return null;
+    const low = ["depressed", "distressed", "angry"].includes(mood);
+    const ready = /\b(?:what can help|what next|next step|how can (?:you|beyond ai) help|what (?:do you|does beyond ai) offer|tell me (?:about|more)|interested|show me|recommend|suggest|what should i do|learn more)\b/.test(text);
+    if (listening.noAdvice || low && !ready) return null;
+    if (turn - alignment.lastTurn < 2 && !ready) return null;
+    const service = concern && concern.service;
+    const options = {
+      work: [
+        "Since you mentioned your workload, Beyond AI helps teams use AI and automation to reduce repetitive work.",
+        "Beyond AI's AI & Analytics and Software Development services are relevant options for the repetitive tasks you described.",
+        "If you'd like to explore this with Beyond AI, we can start by outlining the task, how often you do it, and the result you need."
+      ],
+      learning: [
+        "That learning goal connects with what Beyond AI offers through its AI Education course.",
+        "Beyond AI's beginner-friendly AI Education course covers practical AI without requiring coding. I can explain what's included.",
+        "When you're ready, I can help you prepare your questions about Beyond AI's AI Education course and point you to the team."
+      ],
+      security: [
+        "The security concern you mentioned is one area Beyond AI's Cyber Security services focus on.",
+        "Beyond AI offers Cyber Security services including monitoring, penetration testing and threat intelligence. The right fit depends on what you need protected.",
+        "If you'd like the Beyond AI team to look at your requirements, we can outline the systems involved and the support you're looking for."
+      ],
+      software: [
+        "The software need you described connects with Beyond AI's work building web, mobile and enterprise applications.",
+        "Beyond AI's Software Development services may fit that need. We can narrow it down by the users, the main task and the features that matter most.",
+        "A useful next step with Beyond AI would be a short project brief. I can help you put your needs into words for the team."
+      ],
+      business: [
+        "Beyond AI offers products and services for business operations, so there may be a useful connection to the needs you've shared.",
+        "Beyond AI's options include HRM for human resources, ERP for business operations and Talkora AI for business calls. We can focus on the part of your business that needs help.",
+        "If an option sounds relevant, I can help you prepare your requirements and find the right Beyond AI contact."
+      ]
     };
-    const low = mood === "depressed" || mood === "distressed" || mood === "angry";
-    if (low) {
-      const line2 = pick2(fresh(SOFT_BRIDGES), random);
-      return line2 ? { text: line2, actions: [TALK("What can Beyond AI do?")] } : null;
+    if (service && options[service]) {
+      const continuing = alignment.service === service;
+      const stage = continuing ? Math.min(3, alignment.stage + 1) : ready ? 2 : 1;
+      const asks = {work: "Tell me about AI & Analytics", learning: "Tell me about the AI course", security: "Tell me about Cyber Security", software: "Tell me about Software Development", business: "Tell me about your products"};
+      return {text: options[service][stage - 1], stage, service,
+        actions: stage === 3 ? [CONTACT_US] : [{label: stage === 1 ? "Explore relevant options" : "See service details", ask: asks[service]}]};
     }
-    for (const b of BRIDGES) {
-      if (!b.when(text)) continue;
-      const line2 = pick2(fresh(b.lines), random);
-      if (line2) return { text: line2, actions: b.actions };
-    }
-    const line = pick2(fresh(GENERAL_BRIDGES), random);
-    return line ? { text: line, actions: [TALK("What services do you offer?")] } : null;
+    // Casual conversation gets an occasional light introduction; don't attach
+    // the same product pitch to every emotional or unrelated message.
+    if (low || turn < 3 || turn - alignment.lastTurn < 4 || alignment.stage >= 2) return null;
+    const fresh = GENERAL_BRIDGES.filter(line => !used.has(line));
+    const line = pick2(fresh.length ? fresh : GENERAL_BRIDGES, random);
+    return line ? {text: line, stage: 1, actions: [{label: "Explore Beyond AI", ask: "What can Beyond AI do?"}]} : null;
   }
   function pick2(list, random) {
     return list.length ? list[Math.floor(random() * list.length)] : void 0;
@@ -9819,11 +10692,1897 @@ Please get in touch.
     }
     return null;
   }
+  // Astrix Nova + Physics 0.4.0 knowledge from both supplied READMEs.
+  // Current artificial-life build summary takes precedence over older changelog notes.
+  var ASTRIX_NOVA_KNOWLEDGE = [
+  {
+    "id": "astrix-overview",
+    "title": "Astrix Nova + Physics",
+    "keys": [
+      "astrix",
+      "nova",
+      "physics",
+      "astrix nova",
+      "astrix nova physics",
+      "beyond ai engine",
+      "3d engine",
+      "game engine",
+      "physics engine"
+    ],
+    "answer": "**Beyond AI — Astrix Nova + Physics 0.4.0** is a performance-first browser 3D engine suite. **Astrix** is the shared brand: **Astrix Nova** renders with native WebGPU and **Astrix Physics** simulates with custom JavaScript physics. Beyond AI procedural lifeforms add walking characters and vehicle riding.\n\nPhysics, rendering and heavy asset decoding use separate workers. The organized release is `astrix-nova-physics-source-0.4.0.zip`, with top-level folder `astrix-nova-physics/`. Sources, examples and build scripts are JavaScript, with no TypeScript compilation step. Local packages, models and decoders are included; the core has no CDN or external npm runtime dependency. Optional YouTube embeds require internet access.\n\nExamples use generated minified engines and shared helpers from `build/`, while their application JavaScript and HTML remain readable and commented. Reorganization/minification does not intentionally change controls, physics, audio, lifeform motion or rendering.",
+    "engine": true,
+    "actions": [
+      {
+        "label": "How do I run Astrix Nova?",
+        "ask": "How do I run Astrix Nova?"
+      },
+      {
+        "label": "Astrix racetrack demo",
+        "ask": "Astrix racetrack demo"
+      },
+      {
+        "label": "Astrix performance budgets",
+        "ask": "Astrix performance budgets"
+      }
+    ],
+    "overview": true,
+    "skipIf": [
+      "astrix-setup",
+      "astrix-install",
+      "astrix-demos",
+      "astrix-racetrack",
+      "astrix-riding",
+      "astrix-controls",
+      "astrix-brake",
+      "astrix-camera",
+      "astrix-vehicles",
+      "astrix-grip",
+      "astrix-aircraft",
+      "astrix-lifeforms",
+      "astrix-posture",
+      "astrix-crowds",
+      "astrix-physics",
+      "astrix-rendering",
+      "astrix-environment",
+      "astrix-skids",
+      "astrix-water",
+      "astrix-performance",
+      "astrix-streaming",
+      "astrix-minimal",
+      "astrix-limits",
+      "astrix-validation",
+      "astrix-docs",
+      "astrix-youtube",
+      "astrix-audio",
+      "astrix-headlights",
+      "astrix-dust",
+      "astrix-coasting",
+      "astrix-recovery",
+      "astrix-virtual-experience-engine"
+    ]
+  },
+  {
+    "id": "astrix-setup",
+    "title": "engine setup",
+    "keys": [
+      "quick start",
+      "setup",
+      "set up",
+      "run astrix",
+      "run nova",
+      "how to run",
+      "npm start",
+      "localhost",
+      "requirements",
+      "webgpu support",
+      "file protocol",
+      "start astrix",
+      "start nova",
+      "run astrix",
+      "run nova",
+      "node version",
+      "node js",
+      "node 24",
+      "quick start"
+    ],
+    "answer": "**Run the bundled engine:**\n- Use **Node.js 24 or newer**.\n- Extract `astrix-nova-physics-source-0.4.0.zip` and open a terminal inside `astrix-nova-physics/`.\n- Run `npm start`. The ZIP includes its generated build; dependency installation and compilation are not needed to run the bundled server.\n- Open `http://localhost:8080/racetrack.html`. The server binds to `127.0.0.1:8080`; `PORT` changes its port. The root URL redirects to the uniform viewer.\n\nUse a browser/device with WebGPU, Web Workers and transferable OffscreenCanvas. Serve through localhost or HTTPS; `file://` will not work correctly. Rebuild explicitly after source edits; startup/play does not compile the engine.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix demos",
+        "ask": "Astrix demos"
+      },
+      {
+        "label": "Install Astrix packages",
+        "ask": "Install Astrix packages"
+      }
+    ]
+  },
+  {
+    "id": "astrix-install",
+    "title": "local packages",
+    "keys": [
+      "install",
+      "installation",
+      "npm install",
+      "offline packages",
+      "package imports",
+      "import maps",
+      "bundler",
+      "wasm paths"
+    ],
+    "answer": "**Use Astrix Nova + Physics in another project:**\nBrowser imports from the generated build:\n```js\nimport Nova from './build/Nova/nova.min.js';\nimport Physics from './build/Physics/physics.min.js';\n```\nKeep `build/Nova/`, `build/Physics/` and `build/Shared/` together, preserving relative module, worker, decoder, WASM and Dunes-resource URLs. `build/manifest.json` records runtime entry points.\n\nFor separate packages, first run `npm run pack:offline` to generate and verify the two tarballs in `npm/`, then:\n```sh\nnpm install --offline --ignore-scripts ./npm/astrix-physics-0.4.0.tgz ./npm/astrix-nova-0.4.0.tgz\n```\nPackage default imports remain compatible with `astrix-physics` and `astrix-nova`. Packages contain minified runtime and source; the Physics source API retains the compatible `Astrix` export. Browser import maps can target generated API entries. Serve `.js`/`.mjs` as JavaScript and `.wasm` as `application/wasm`. Bundlers must preserve or resolve local worker/resource URLs. Local decoders may use WebAssembly.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix minimal scene",
+        "ask": "Astrix minimal scene"
+      }
+    ]
+  },
+  {
+    "id": "astrix-demos",
+    "title": "included demos",
+    "keys": [
+      "demos",
+      "demo pages",
+      "examples",
+      "included demos",
+      "simulation",
+      "helmet",
+      "uniform viewer"
+    ],
+    "answer": "**Included engine demos:**\n- racetrack.html: start on foot beside both parked cars; riding, shallow water, skid marks, audio, headlights, tire dust and YouTube billboards.\n- drive.html: vehicle handling and automatically fitted riders.\n- flight.html: automatically aligned aircraft, complete fitted flap meshes, terrain collisions and YouTube billboards over the racetrack.\n- lifeforms.html: automatic humanoid fitting, procedural locomotion, posture, waving and mesh switching.\n- simulation.html: independent vehicles, lifeforms, moving objects, aircraft and streamed terrain.\n- dunes.html: birds, wind-driven sand/dust, sky, fog, shared-world day/night and YouTube billboards.\n- youtube.html: standalone three-model YouTube billboard demo.\n- Examples/uniform/, Examples/helmet/ and Examples/viewer/: baked-lighting, materials and model viewers.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix racetrack demo",
+        "ask": "Astrix racetrack demo"
+      },
+      {
+        "label": "Astrix lifeforms",
+        "ask": "Astrix lifeforms"
+      }
+    ]
+  },
+  {
+    "id": "astrix-racetrack",
+    "title": "racetrack workflow",
+    "keys": [
+      "racetrack",
+      "race track",
+      "endurance run track",
+      "avatar here",
+      "both cars"
+    ],
+    "answer": "**racetrack.html** starts on foot beside **Furnariscafatigt and Normadic**. Walk within **1.5 metres along the ground** of a door, then press **Enter** or tap mobile Enter. Entry is rejected above **2 m/s**. Driver-side entry gives driving controls; passenger-side entry only seats you. Both supplied cars have left-side steering wheels.\n\nPress **Esc** or mobile Exit to leave. Ground support and standing clearance are checked; blocked exits keep you seated. Moving exits inherit vehicle momentum. Above **3 m/s**, the lifeform releases balance/pose assistance and tumbles before recovery.\n\nThe visible track renders once; physics uses its dedicated collider mesh and avatar-here sets the starting transform. Water, skid marks, audio, headlights, tire dust and YouTube billboards are included.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix vehicle riding",
+        "ask": "Astrix vehicle riding"
+      },
+      {
+        "label": "Astrix controls",
+        "ask": "Astrix controls"
+      }
+    ]
+  },
+  {
+    "id": "astrix-riding",
+    "title": "vehicle seats and control transfer",
+    "keys": [
+      "vehicle riding",
+      "enter",
+      "exit",
+      "enter vehicle",
+      "exit vehicle",
+      "enter car",
+      "enter a car",
+      "exit car",
+      "exit a car",
+      "ride vehicles",
+      "driver side",
+      "passenger side",
+      "driver seat",
+      "passenger seat",
+      "seat fitting",
+      "seated",
+      "driving pose",
+      "1 5 metres",
+      "1 5m"
+    ],
+    "answer": "**Vehicle riding:** approach a door within **1.5 m**, then press **Enter** or mobile Enter. Entry requires a sufficiently slow vehicle (the demo rejects entry above **2 m/s**). Driver-side entry transfers driving controls; passenger-side entry only seats the rider.\n\nPress **Esc** or mobile Exit to leave. Exiting restores character physics and walking controls. Ground support and standing clearance are required; blocked exits keep the rider seated. Moving exits inherit momentum; above **3 m/s**, balance/pose motors release and the body tumbles. Slow exits retain standing behavior. After grounded torso motion stays quiet for **0.6 seconds**, recovery blends into staged get-up over **1.2 seconds**. Movement commands and key releases are retained during the tumble.\n\nThe fitted seat bends legs and raises driving arms. Mounted limb collisions, joints and posture motors are suspended; the mesh follows the full vehicle transform. There is no finger-grip/steering-wheel contact solver. APIs include life.enterVehicle(car) and life.exitVehicle(). Seat markers/interior geometry or metadata are needed. Exit before replacing the rider mesh or deleting an occupied car.\n\n`Examples/VehicleRider.js` demonstrates proximity selection, driver/passenger restrictions and input/camera transfer.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix racetrack demo",
+        "ask": "Astrix racetrack demo"
+      },
+      {
+        "label": "Astrix vehicle rigging",
+        "ask": "Astrix vehicle rigging"
+      }
+    ]
+  },
+  {
+    "id": "astrix-controls",
+    "title": "walking and driving controls",
+    "keys": [
+      "controls",
+      "keyboard",
+      "touch controls",
+      "mobile controls",
+      "wasd",
+      "arrow keys",
+      "joysticks",
+      "how to move",
+      "how to drive"
+    ],
+    "answer": "**Controls depend on demo and actor:**\n- WASD/arrows: walk or drive; floating joysticks on touch.\n- Shift: run/vehicle boost; full movement stick runs on foot.\n- Q/E: lifeform strafe; right stick left/right on touch.\n- Space: jump on foot; hold to brake in a vehicle.\n- Double tap: jump on foot; latch vehicle brake. Joystick movement or another double tap releases the brake.\n- **Enter / Esc:** enter / exit vehicle; mobile Enter/Exit buttons.\n- **Z:** wave on foot / horn while driving.\n- **X:** headlights while driving; mobile Headlamp button.\n- [ cycles stand → sit → lie; ] reverses it. Touch right stick down/up, recenter between changes.\n- R resets in driving/flight demos.\n\nFlight: W nose down, S nose up; A/D roll, Q/E yaw. [ / ] decrease/increase throttle; Ctrl / Shift remain aliases. Touch sticks handle pitch/roll with separate throttle/rudder controls. Desktop R resets flight; the mobile flight Reset button was removed.\n\nTouch buttons appear only for a coarse primary pointer. Enter is proximity-dependent. Wave is lower left on foot; Exit/Horn/Headlamp use a compact seated row. Mobile status/help/telemetry text is hidden and the lifeform menu starts closed. There are no extra audio or YouTube enable/mute buttons.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix camera controls",
+        "ask": "Astrix camera controls"
+      },
+      {
+        "label": "Astrix mobile brake",
+        "ask": "Astrix mobile brake"
+      }
+    ]
+  },
+  {
+    "id": "astrix-brake",
+    "title": "mobile brake",
+    "keys": [
+      "mobile brake",
+      "double tap",
+      "brake button",
+      "latch brake",
+      "release brake",
+      "space brake"
+    ],
+    "answer": "**Vehicle braking:** desktop brakes while Space is held. Touch double tap latches the brake; **joystick movement or another double tap releases it**. There is no mobile brake button. On foot, double tap jumps. Steering does not automatically apply brakes or reduce power. Coasting now includes quadratic aerodynamic drag, contact-dependent rolling resistance and throttle-dependent engine braking in forward and reverse; gravity still acts on slopes.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-camera",
+    "title": "camera and orbit",
+    "keys": [
+      "camera",
+      "orbit",
+      "zoom",
+      "pan",
+      "20 metres",
+      "20m",
+      "third person",
+      "follow height"
+    ],
+    "answer": "**Camera:** drag to orbit; right drag, middle drag or Shift drag to pan. Touch orbit viewers support two-finger pan and pinch where available. Zoom-out is capped at **20 metres**, independently of physics distance tiers.\n\nCars and flight start 8 m behind with .08 rad elevation and a .45 m follow-target offset. Lifeforms start 4 m behind at .06 rad elevation, targeting .25 m below the torso origin. Simulation changes its camera with the selected actor. Applications can set followHeight in nova.connect().\n\nDuring a moving-exit tumble, the fallen-body camera keeps a stable heading and stays above terrain while looking down toward the character. The collision-adjusted camera is also the positional-audio listener.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-vehicles",
+    "title": "automatic vehicle rigging",
+    "keys": [
+      "vehicle rigging",
+      "automatic vehicle",
+      "auto rig",
+      "autor ig",
+      "addvehicle",
+      "wheel fitting",
+      "suspension",
+      "drivetrain",
+      "normadic",
+      "furnariscafatigt",
+      "chassis",
+      "awd",
+      "fwd",
+      "rwd"
+    ],
+    "answer": "**Automatic vehicle setup:** load a GLB and call `await physics.addVehicle(model)`, then add the model to the Nova scene. Recognizable wheel meshes/names supply wheel positions and radii; chassis geometry, mass placement and suspension are fitted automatically. Authored phy-body-* collision meshes are preferred. Existing relative wheel alignment is preserved.\n\nVehicles use ray suspension, AWD/FWD/RWD options, throttle/steer or forward/back/left/right/brake controls, braking and boost. Suspension stiffness follows mass and wheel radius, with clearance limits and bump stops. Tires raycast static geometry; dynamic contacts use the chassis. Arbitrary meshes still need recognizable vehicle geometry.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix tire grip",
+        "ask": "Astrix tire grip"
+      },
+      {
+        "label": "Astrix vehicle riding",
+        "ask": "Astrix vehicle riding"
+      }
+    ]
+  },
+  {
+    "id": "astrix-grip",
+    "title": "rubber tire grip",
+    "keys": [
+      "tire grip",
+      "tyre grip",
+      "traction",
+      "rubber",
+      "drifting",
+      "sideways slip",
+      "lateral friction",
+      "steering",
+      "rollover"
+    ],
+    "answer": "**Rubber tire grip:** tire traction is separate from chassis friction (documented default coefficient 1.15). The later handling update raises high-speed lateral friction to 3.2. An iterative tire solver uses contact mass and chassis inertia to reduce sideways slip; unsupported wheels receive no tire drag.\n\nProgressive high-speed keyboard steering and a low fitted mass origin improve control and rollover stability. Steering does not trigger braking, power reduction or an added corner-speed clamp. The model is simplified and does not guarantee zero slip. Use `npm run test:lap` for the scripted course checks.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-aircraft",
+    "title": "aircraft physics and controls",
+    "keys": [
+      "aircraft",
+      "flight",
+      "airplane",
+      "aeroplane",
+      "plane",
+      "drone",
+      "addaircraft",
+      "thrust",
+      "propulsion",
+      "aileron",
+      "elevator",
+      "rudder",
+      "stall"
+    ],
+    "answer": "**Aircraft:** physics.addAircraft(model) derives forward/up alignment, collision geometry and lifting area, and binds recognizable ailerons, elevators and rudders. Models use the authored -X front convention.\n\nPropulsion comes from configurable thrust driven by throttle. Physics also models angle-of-attack lift, stall reduction, drag and local pitch/roll/yaw rate controls. Full rotations are allowed without an upright clamp. W pitches down; S pitches up. Touch sticks handle pitch/roll, with separate throttle and rudder controls.\n\nflight.html uses the Endurance Run Track collider and starts the aircraft 40 m above avatar-here. This is a simplified flight model.\n\nCurrent flight controls also use A/D for roll, Q/E for yaw and [ / ] to decrease/increase throttle (Ctrl / Shift are aliases). Desktop R resets; the mobile flight Reset button was removed. Flight explicitly installs Dunes collision geometry alongside the track. The drone can collide, slide and rest, but has no added landing gear, damage or automatic landing controller. Fitted flap meshes and YouTube billboards are included. Terrain queries reject separated regions before costly narrow-phase work while keeping the contact solver.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix controls",
+        "ask": "Astrix controls"
+      }
+    ]
+  },
+  {
+    "id": "astrix-lifeforms",
+    "title": "procedural artificial life",
+    "keys": [
+      "lifeforms",
+      "lifeform",
+      "artificial life",
+      "humanoid",
+      "biped",
+      "givelife",
+      "walking",
+      "running",
+      "strafe",
+      "procedural locomotion"
+    ],
+    "answer": "**Procedural lifeforms:** `nova.giveLife()` estimates an upright humanoid fit, builds a **12-part physical biped with 11 joints**, and binds the visible GLB using generated skinning.\n\nBehaviors include walking/running forward and backward, strafing, turning, jumping, stand/sit/lie transitions, waving, recovery breathing and varied idle gestures. Mesh switching retains identity and learned policy while refitting proportions.\n\nMotion uses procedural targets, terrain probes, joint motors and balance assistance; it is not torque-only learned balance. Unusual anatomy or poses can fit poorly. Supplied FBX files are motion references, not runtime animation imports.\n\nNormal idle, walk, jog and run retain assistance. Desktop movement accelerates from walk to jog; Shift accelerates jog to run, while touch speed follows stick level. Planted foot orientation is stable through ordinary gait, with fitted shoulder clearance and speed-based arm swing for supplied A-pose meshes. During fast moving-vehicle exits, balance/pose motors release until settling and recovery.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix posture and waving",
+        "ask": "Astrix posture and waving"
+      },
+      {
+        "label": "Astrix crowd performance",
+        "ask": "Astrix crowd performance"
+      }
+    ]
+  },
+  {
+    "id": "astrix-posture",
+    "title": "posture, waving and idle",
+    "keys": [
+      "posture",
+      "waving",
+      "wave",
+      "sit",
+      "sitting",
+      "lie",
+      "lying",
+      "idle",
+      "breathing",
+      "neck",
+      "elbow",
+      "natural motion"
+    ],
+    "answer": "**Lifeform actions:** press Z or the mobile wave button to wave. [ cycles standing → sitting → lying; ] reverses it. On touch, move the right stick down/up and recenter between changes. Idle gestures and recovery breathing are procedural.\n\nMotion tuning includes firmer planted feet, smoother walk/run transitions, stronger neck support, head looks, controlled elbow bending and a render-only waist transform. FBX references are not played as imported animations.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-crowds",
+    "title": "lifeform distance budgets",
+    "keys": [
+      "crowd",
+      "crowds",
+      "crowd performance",
+      "maxdetailedlifeforms",
+      "detailed lifeforms",
+      "48 lifeforms",
+      "1000 ragdolls",
+      "articulated physics"
+    ],
+    "answer": "**Crowd budget:** with distance LOD enabled, at most **four lifeforms** receive detailed articulated physics by default. The controlled actor takes priority, followed by requested jump/wave/posture actions and nearby actors. Set maxDetailedLifeforms at world creation to change the limit.\n\nOther actors use approximate logical movement and procedural poses at 15/5/1 Hz by distance, without limb collisions or joint solving. Settled sit/lie poses remain; special actions wait for a detailed slot. Disabling distance LOD enables full physics for all actors at higher cost.\n\nMeshes, weights and textures are shared, but each actor has its own palette. This is not 1,000 simultaneous full ragdolls or hardware-instanced drawing.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-physics",
+    "title": "collision bodies and shapes",
+    "keys": [
+      "astrix physics",
+      "physics bodies",
+      "collider",
+      "collision",
+      "bodies",
+      "capsule",
+      "trimesh",
+      "convex",
+      "raycast",
+      "sensors",
+      "solid true",
+      "sat",
+      "bvh"
+    ],
+    "answer": "**Astrix physics** supports independent static, dynamic and kinematic bodies; box, sphere, capsule and mesh/trimesh shapes; triangle BVHs, convex SAT contacts, impulse/friction solving, sleeping, collision masks and sensors. APIs include addBody(), addMesh(), addCapsule(), addCharacter(), applyImpulse(), setTransform(), raycast() and remove().\n\nMesh bodies accept GLBs or vertices/indices. GLB node transforms are baked into collision coordinates; body transforms add position/quaternion rotation, not runtime scale. Capsule height is 2 × (halfHeight + radius). Open meshes are surfaces; solid:true containment needs watertight non-self-intersecting geometry. Prefer simple colliders.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix limitations",
+        "ask": "Astrix limitations"
+      }
+    ]
+  },
+  {
+    "id": "astrix-rendering",
+    "title": "Nova WebGPU rendering",
+    "keys": [
+      "rendering",
+      "renderer",
+      "pbr",
+      "materials",
+      "lightmaps",
+      "msaa",
+      "webp",
+      "draco",
+      "meshopt",
+      "ktx2",
+      "skinning",
+      "webgpu"
+    ],
+    "answer": "**Nova** renders native WebGPU in a dedicated worker with **4× MSAA**. It supports metallic/roughness PBR, normal/AO/emissive maps, vertex colors, alpha mask/blend, UV transforms, baked lightmaps and GPU deformation for generated lifeform skins. Local GLB decoders include Draco, Meshopt, WebP and supported LDR KTX2.\n\nAdaptive resolution, pixel-density limits and distance/frustum culling reduce work. Repeated models share geometry/textures with independent transforms; ordinary models are not automatically hardware-instanced. General imported animation, transmission/volume/clearcoat shading and cast shadows are outside this release.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix environment lighting",
+        "ask": "Astrix environment lighting"
+      },
+      {
+        "label": "Astrix performance budgets",
+        "ask": "Astrix performance budgets"
+      }
+    ]
+  },
+  {
+    "id": "astrix-environment",
+    "title": "Dunes, sky and lighting",
+    "keys": [
+      "environment",
+      "dunes",
+      "sky",
+      "hdr",
+      "lighting",
+      "background",
+      "birds",
+      "wind",
+      "sand",
+      "dust",
+      "fog",
+      "day night",
+      "daynight"
+    ],
+    "answer": "**Current environment:** driving, flight, lifeform, racetrack and simulation use Dunes sky, birds, atmospheric lighting and fog. The default shared-world day lasts **1,200 real seconds**: about ten minutes of day and ten of night, including twilight, anchored to the Unix UTC timestamp. Reloading, late joining, timezone changes and hidden-tab resume preserve phase when device clocks agree. No internet-time lookup is made. nova.setWorldTimeOffset(milliseconds) supports a future server clock offset. Explicit dunes: {clock:'local'} retains optional 24-hour local-clock mode.\n\nWind-driven ground sand and ambient dust belong to dedicated Dunes terrain; supported driving scenes also have tire dust. The earlier six-image sky/HDR files were removed. Nova retains an HDR loader for supplied environments; the uniform viewer keeps baked lighting. Optional visual Dunes terrain has no automatic collider, but flight explicitly installs Dunes collision geometry alongside the track.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-skids",
+    "title": "slip-based skid marks",
+    "keys": [
+      "skid marks",
+      "skids",
+      "skidding",
+      "tire marks",
+      "tyre marks",
+      "512 segments"
+    ],
+    "answer": "**Skid marks** reuse focused-car wheel contacts. Stronger slip makes marks darker and slightly wider. Normal rolling, airborne wheels and water produce no marks. A bounded **512-segment buffer** reuses resources and fades old marks. This cosmetic effect does not change vehicle forces.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-water",
+    "title": "shallow racetrack water",
+    "keys": [
+      "water",
+      "ripples",
+      "shallow water",
+      "wet grip"
+    ],
+    "answer": "**Racetrack water** is cosmetic shallow water with bounded tire ripples. It does not change tire grip or suspension. Wheels in water do not emit skid marks.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-performance",
+    "title": "performance budgets",
+    "keys": [
+      "performance",
+      "budgets",
+      "fps",
+      "30 fps",
+      "60 hz",
+      "distance lod",
+      "distance tiers",
+      "freeze",
+      "sleeping",
+      "hidden tabs",
+      "pixel ratio"
+    ],
+    "answer": "**Performance-first defaults:**\n- Nova targets **30 FPS**, with adaptive resolution and a 1.25 max pixel ratio.\n- Near/medium/far physics: **60/15/5 Hz**.\n- Distance thresholds: near **20**, far **60**, freeze **140** world units; hysteresis **2**.\n- Up to **four** detailed lifeforms with distance LOD enabled.\n- Hidden tabs pause rendering/automatic physics, suspend local audio and release YouTube players.\n- Per-asset defaults: **128 MiB** download, **256 MiB** decoded geometry, **1024 px** texture dimension.\n\nFar simulation skips expensive collision/suspension/aerodynamics; frozen bodies stop moving. Camera/selected-actor focus keeps nearby interactions active. The 20 m orbit limit is separate. These are budgets, not guaranteed device frame rates.\n\nAdditional bounded work: tire dust uses 32 pooled puffs and one active draw with no new physics queries. YouTube retains at most three players and updates gain at most 10 Hz. Local audio uses three continuous car sources or at most four aircraft sources, six simultaneous short effects, source updates at most 20 Hz and listener updates at 10 Hz.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ],
+    "actions": [
+      {
+        "label": "Astrix crowd performance",
+        "ask": "Astrix crowd performance"
+      },
+      {
+        "label": "Astrix terrain streaming",
+        "ask": "Astrix terrain streaming"
+      }
+    ]
+  },
+  {
+    "id": "astrix-streaming",
+    "title": "GLB loading and terrain streaming",
+    "keys": [
+      "streaming",
+      "terrain streaming",
+      "heavy glb",
+      "large glb",
+      "loading progress",
+      "cancelasset",
+      "createstreamer",
+      "byteshint",
+      "residency",
+      "cells"
+    ],
+    "answer": "**Heavy GLBs** download and decode in an asset worker, with progress/cancellation and chunked buffer uploads. A single file is not progressively rendered during download or automatically divided into cells; compressed and decoded data must fit memory. nova.loadGLB() creates a descriptor; worker progress starts when it is added. Subscribe via nova.on(\"progress\", callback); cancel with nova.cancelAsset(asset).\n\nLarge worlds use separately authored GLB cells with nova.createStreamer(). Cells must already be in world positions; center/radius are residency bounds, not transforms. Unloading releases render resources and static physics. Hysteresis, maxConcurrent, maxResident, maxResidentBytes and bytesHint control residency; memory-blocked cells require streamer.retry(id). Limits do not cap every browser/driver allocation.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-minimal",
+    "title": "minimal scene API",
+    "keys": [
+      "minimal scene",
+      "code example",
+      "scene api",
+      "givelife example",
+      "connect physics",
+      "sample code"
+    ],
+    "answer": "**Minimal scene using the generated minified engines:**\n```js\nimport Physics from './build/Physics/physics.min.js';\nimport Nova from './build/Nova/nova.min.js';\n\nconst physics = await Physics.create({autoStart: false});\nconst nova = await Nova.create({\n  canvas: document.querySelector('canvas'),\n  performance: {targetFPS: 30, maxPixelRatio: 1.25}\n});\nconst ground = await nova.loadGLB('/assets/ground.glb');\nnova.scene.add(ground);\nawait physics.addMesh(ground, {type: 'static'});\nconst life = await nova.giveLife('/assets/avatar.glb', physics, {\n  position: [0, 2, 0]\n});\nnova.connect(physics, {followBody: life.rootId});\nnova.controls.enableOrbit({distance: 4, maxDistance: 20});\nnova.start();\nawait nova.whenReady;\nawait physics.resume();\nawait life.setControls({mode: 'walk', forward: 1});\n```\nSupply your own ground/avatar GLBs at the shown paths and preserve the relative `build/` layout. Spawn above actual collision ground. Bind your own keyboard/touch input to returned handles; the library does not install demo controls automatically.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-limits",
+    "title": "current release limitations",
+    "keys": [
+      "limitations",
+      "boundaries",
+      "unsupported",
+      "continuous collision",
+      "ccd",
+      "tunneling",
+      "blender",
+      "cast shadows",
+      "video textures",
+      "youtube",
+      "device loss",
+      "animation import",
+      "fbx",
+      "license"
+    ],
+    "answer": "**0.4.0 boundaries:** experimental custom physics with bounded-cost contacts and simplified vehicle/flight models. There is no complete continuous collision detection for every shape; fast/small objects may tunnel. Dense piles and large moving concave meshes can be expensive or unstable.\n\nAutomatic fitting assumes upright humanoids. Generated lifeform skinning is supported, but general imported animation/FBX playback, transmission/volume/clearcoat shading, cast shadows and exact Blender reproduction are outside this release. General video-texture playback is not implemented by the YouTube integration. Current billboards use official cross-origin YouTube embeds, requiring internet access, embedding permission and normal user input if autoplay rules block sound. This is not video extraction or video-to-texture copying. Recreate Nova after WebGPU device loss; recovery is not automatic.\n\nRetain decoder and asset notices when redistributing. The READMEs do not assign a new engine/asset license; Dunes credits/MIT notice are in Nova/src/dunes/LICENSE.txt and its built resource copy; decoder notices are under Shared/vendor/ and its build/package copies.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-validation",
+    "title": "tests and validation",
+    "keys": [
+      "validation",
+      "tests",
+      "testing",
+      "benchmark",
+      "npm test",
+      "test lap",
+      "pack offline",
+      "qa reports",
+      "phone fps"
+    ],
+    "answer": "**Validation commands for the organized release:**\n- `npm test`: pretest rebuilds, then regression/build/HTTP checks run.\n- `npm run test:build`: focused minified dependency/API/worker checks.\n- `npm run test:lap`: scripted racetrack laps for both cars.\n- `npm run pack:offline`: test, generate separate packages and verify offline installation.\n\n`docs/VALIDATION.md` records Node.js **24.19.0**, **76 existing regression commands**, **two added minified-build/HTTP checks**, separate and combined engine builds, and offline installation with an empty npm cache. HTTP checks cover **19 deliveries**. Recorded outputs include **48 minified JavaScript modules with embedded-source maps** and parity for **18 readable/commented HTML pages**.\n\nChecks cover a closed runtime dependency graph, API parity, deterministic simulation, an actual minified physics worker, source/build parity, installed worker motion, freeze/wake and compressed-fixture decoding. Reports: `qa/VALIDATION.log`, `qa/RESULTS.json`, `qa/BUILD.log`, `qa/OFFLINE.log`, `qa/HTML-VALIDATION.log`.\n\nThese are archive-recorded results. The full suite was not rerun while updating the README or VIA knowledge. No new device FPS, live WebGPU rendering, YouTube playback or listening verification is claimed.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-docs",
+    "title": "engine documentation and layout",
+    "keys": [
+      "documentation",
+      "readme",
+      "project layout",
+      "source folders",
+      "vehicle riding md",
+      "artificial life md",
+      "which readme",
+      "source layout",
+      "source code",
+      "source folders",
+      "project layout",
+      "organized source",
+      "Nova/src/Nova.js",
+      "Physics/src/Physics.js"
+    ],
+    "answer": "**Organized Astrix Nova + Physics source layout:**\n- `Nova/src/Nova.js`: Astrix Nova public API; `Nova/src/` contains rendering, workers, shaders, camera, skinning and effects.\n- `Physics/src/Physics.js`: Astrix Physics public API with compatible `Astrix` export; `Physics/src/` contains worlds, collisions, bodies, joints, vehicles, aircraft and lifeforms.\n- `Shared/`: loading, distance/clock policies, geometry helpers and local codecs.\n- `Examples/`: readable, commented HTML/JavaScript, controls, audio and integration helpers. Entry files include `Examples/racetrack/RacetrackExample.js` and `Examples/flight/FlightExample.js`.\n- `build/Nova/nova.min.js`, `build/Physics/physics.min.js`: generated minified API entries used by examples.\n- `build/Nova/`, `build/Physics/`, `build/Shared/`: minified modules/workers, source maps and required local resources; `build/manifest.json` maps runtime entries.\n- `assets/`, `docs/`, `docs/reference/`, `qa/`, `scripts/`, `tests/`, `npm/`, `server.js`: resources, guides, detailed notes, validation, JavaScript build/packaging tools, regression checks, generated package tarballs and local server.\n\n**Path case matters.** Former root `nova/`, `astrix/`, `core/`, `examples/` belong to the older archive layout.\n\nSee `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `docs/SOURCE-MAP.md`, `docs/VALIDATION.md`, `build/README.md` and `Examples/README.md`. Detailed guides such as ARTIFICIAL-LIFE.md, VEHICLE-RIDING.md, PLAYER-AUDIO.md, TUMBLE-CAMERA.md and YOUTUBE-INTEGRATION.md are under `docs/reference/`.\n\nKnowledge follows the supplied README dated **16 October 2026** for `astrix-nova-physics-source-0.4.0.zip`. It supersedes older conflicting notes such as F entry, stopped-only exits, local-clock defaults and deferred YouTube. Retain bundled third-party decoder/asset notices; the README assigns no new engine or asset license.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-youtube",
+    "title": "YouTube billboards",
+    "keys": [
+      "youtube",
+      "billboards",
+      "billboard",
+      "boardscreen",
+      "billboardtower",
+      "double sided",
+      "video playback",
+      "6 dlxcf0bwq",
+      "8nw04gav9lw",
+      "nk03hu2bfy4"
+    ],
+    "answer": "**YouTube billboards:** racetrack.html, dunes.html and flight.html include all three authored models with **static collider meshes**. Racetrack/flight place a visible board in front of the starting camera. youtube.html is the standalone preview.\n- boardscreen: **6-dlxCF0bwQ**\n- billboardtower: **8nw04gAV9lw**\n- double-sided billboard: **Nk03Hu2BFy4**\n\nOfficial YouTube iframes fit the screen corners beneath the WebGPU canvas. Depth-tested transparent screen areas let closer geometry cover video. There is no extraction, video-to-texture copy, extra full-scene pass or per-frame terrain raycast. One player serves both faces of the double-sided board.\n\nSound is automatic with local distance attenuation: speakers are three metres above the base, volume fades from **35 m** and is silent by **55 m**, using full 3D listener distance. Looking away does not mute nearby boards. The iframe API supplies scalar volume, not directional stereo panning or terrain audio occlusion.\n\nAt most **three players** are retained. Out-of-budget players pause and are removed after **1.5 s**; hiding the tab releases them immediately. Volume commands run at most **10 Hz**, only on integer changes. Internet, embedding permission and possibly normal input for autoplay are required. No extra enable/mute buttons are shown.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-audio",
+    "title": "positional engine and character sound",
+    "keys": [
+      "audio",
+      "sound",
+      "positional sound",
+      "footsteps",
+      "engine sound",
+      "horn",
+      "engine6",
+      "listener",
+      "panners"
+    ],
+    "answer": "**Positional audio** starts after ordinary keyboard/touch input. Engine/horn sources follow the car; footsteps use actual foot contacts, skids use slipping wheel contacts, and impacts play at the struck vehicle. The collision-adjusted camera is the listener. Recorded buffers cover walking/running, jump effort, landings, door entry/exit, engine shutdown, horn and impacts.\n\nThe current car mix uses one continuous engine6.ogg excerpt with smoothed speed/throttle pitch, separate speed-driven wind and road/loose-ground skid recordings. It does not blend competing car-engine recordings. Pitch approximates speed/throttle; there is no physical RPM telemetry. Footsteps are softened offline and tire slip lowers engine level for skid detail.\n\nBounds: three continuous car sources, at most four aircraft sources, six simultaneous short effects, source updates at most 20 Hz and listener updates at 10 Hz. The bank uses one fetch and under 2 MiB reused PCM with procedural fallback. Equal-power panners avoid HRTF; no audio raycasts or reverb passes. Hidden tabs suspend audio; teardown releases its graph. YouTube volume attenuation uses the iframe API separately.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-headlights",
+    "title": "fitted vehicle headlights",
+    "keys": [
+      "headlights",
+      "headlight",
+      "headlamp",
+      "lamp",
+      "emitters"
+    ],
+    "answer": "**Headlights:** press **X** while driving or mobile Headlamp. Lights follow fitted lamp geometry in existing material shaders. One active vehicle supplies at most **eight emitters**, **24 m range** and **45 m camera cull**. There are no extra draw passes, shadow maps or physics queries, though fragment shading has a cost. Lights are unshadowed and can leak through occluders.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-dust",
+    "title": "contact-based tire dust",
+    "keys": [
+      "tire dust",
+      "tyre dust",
+      "puffs",
+      "loose terrain",
+      "acceleration trail"
+    ],
+    "answer": "**Tire dust** reuses the followed vehicle's wheel contacts: at most **32 pooled puffs**, **one active draw**, and emission at most **20 Hz**. Loose terrain emits more strongly; pavement gives a lighter acceleration/slip trail. Puffs fade in **0.55–0.9 s**. Stopped, airborne, distant or water-covered wheels emit none. No extra physics queries are added. Ambient wind-driven sand/dust remains part of dedicated Dunes terrain.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-coasting",
+    "title": "car coasting and drag",
+    "keys": [
+      "coasting",
+      "coast",
+      "engine braking",
+      "rolling resistance",
+      "aerodynamic drag",
+      "release throttle"
+    ],
+    "answer": "**Vehicle coasting** uses quadratic aerodynamic drag, contact-dependent rolling resistance and throttle-dependent engine braking in forward and reverse. Releasing throttle gradually reduces speed while gravity still acts on slopes. These losses reuse existing wheel loads and add no raycasts.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-recovery",
+    "title": "moving-exit tumble and recovery",
+    "keys": [
+      "tumble",
+      "tumbling",
+      "recovery",
+      "get up",
+      "moving exit",
+      "fallen body",
+      "standing controller",
+      "balance assistance"
+    ],
+    "answer": "**Moving exits** inherit vehicle momentum. Above **3 m/s**, balance and pose motors release so the existing articulated body can tumble naturally. Slow exits retain standing behavior. Normal idle, walking, jogging and running continue to use assistance.\n\nAfter grounded torso motion stays quiet for **0.6 s**, recovery blends from the fallen pose into staged get-up over **1.2 s**. Movement commands and releases are retained during the tumble. The fallen-body camera keeps stable heading and stays above terrain, looking down at the character. Ground/standing clearance checks still block unsafe exits.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  },
+  {
+    "id": "astrix-virtual-experience-engine",
+    "title": "Astrix as a virtual experience engine",
+    "keys": [
+      "virtual experience engine",
+      "virtual experience",
+      "virtual experiences",
+      "virtual experience technology",
+      "interactive experience engine",
+      "virtual training engine",
+      "simulation engine",
+      "learning simulation"
+    ],
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "virtual experience",
+      "virtual experiences",
+      "interactive experience engine",
+      "virtual training engine",
+      "simulation engine",
+      "learning simulation"
+    ],
+    "engine": true,
+    "answer": "**Astrix Nova + Physics can serve as a virtual experience engine:** software for building responsive digital environments in which users act, explore systems, practise tasks and observe results.\n\n**Nova** supplies native WebGPU rendering, models, materials, cameras and scene presentation. **Astrix physics** supplies collision bodies, movement, vehicle and aircraft behavior, and interaction with terrain. Procedural lifeforms and controls let participants walk through environments, enter vehicles and perform supported actions. Rendering, physics and heavy asset decoding use separate workers, with bounded workloads and distance budgets to prioritize responsive performance.\n\nIn a learning application, these capabilities could support virtual laboratories, equipment-operation exercises or guided simulations. The application would still need its own task objectives, instruction, task-specific behavior, feedback and assessment. An engine demo does not by itself establish training accuracy, learning outcomes or competence; subject specialists should validate those elements, with real-world practice where relevant.\n\n**VETA is the proposed learning organization; Astrix Nova + Physics is a technology engine that could support such experiences.** This describes a possible technical role, not a claim of an established VETA deployment, partnership, accreditation or government mandate."
+  },
+  {
+    "id": "astrix-build",
+    "title": "JavaScript sources and minified builds",
+    "keys": [
+      "build",
+      "builds",
+      "minify",
+      "minified",
+      "minification",
+      "terser",
+      "source maps",
+      "npm run build",
+      "build nova",
+      "build physics",
+      "build:nova",
+      "build:physics",
+      "javascript source",
+      "typescript",
+      "dist",
+      "build folder",
+      "rebuild"
+    ],
+    "answer": "**Astrix Nova + Physics sources and builds:** edit canonical readable JavaScript in `Nova/src/`, `Physics/src/`, `Shared/` and `Examples/`. There is no TypeScript compilation step. All **18 HTML pages** are expanded, formatted and commented, including layout, CSS and import maps.\n\nBuild commands:\n```sh\nnpm ci\nnpm run build\nnpm run build:nova\nnpm run build:physics\n```\n`npm ci` installs locked development dependencies once. `build` minifies both engines/shared code and assembles packages. `build:nova` builds Nova plus shared dependencies and its package; `build:physics` does the same for Physics.\n\nTerser performs development-time minification; Acorn supports development tooling. Neither adds an npm runtime dependency. Scripts preserve ES module exports, rewrite module/worker paths, copy runtime resources and emit source maps. Edit source and rebuild instead of separately maintaining generated files.\n\nExamples import engines/shared modules exclusively from `build/`, including direct helper imports. Example application JavaScript remains readable. Engines, workers and shared helpers are minified. Keep `build/Nova/`, `build/Physics/` and `build/Shared/` together. Source maps are not requested during ordinary play. Startup/play does not compile anything. Minification reduces delivery size; it does not by itself establish a device FPS improvement.",
+    "engine": true,
+    "requires": [
+      "astrix",
+      "nova",
+      "physics",
+      "3d engine",
+      "webgpu",
+      "lifeform",
+      "lifeforms",
+      "racetrack",
+      "dunes",
+      "skid marks",
+      "vehicle rigging",
+      "normadic",
+      "furnariscafatigt",
+      "giveLife",
+      "addVehicle",
+      "addAircraft",
+      "terrain streaming",
+      "vehicle",
+      "vehicles",
+      "car",
+      "cars",
+      "aircraft",
+      "flight",
+      "plane",
+      "drone",
+      "tire",
+      "tyre"
+    ]
+  }
+];
+
+  // VETA founding proposal, discussion draft 16 October 2026: background knowledge only.
+  var VETA_KNOWLEDGE = [
+  {
+    "id": "veta-overview",
+    "title": "VETA — proposed initiative",
+    "keys": [
+      "veta",
+      "virtual experience technology authority",
+      "what is veta",
+      "about veta"
+    ],
+    "answer": "**VETA — Virtual Experience Technology Authority** is a **proposed organization** for developing and applying virtual experience technology to education, practical skills training and simulation. Learners enter interactive environments to perform tasks, explore systems, practise decisions and learn from the results.\n\nThis is an organizational framework and founding proposal, a **discussion draft dated 16 October 2026**. It does not confer government status; organizational form, accreditation or a public mandate would be established separately.",
+    "overview": true,
+    "skipIf": [
+      "veta-purpose",
+      "veta-mission",
+      "veta-vision",
+      "veta-approach",
+      "veta-programs",
+      "veta-structure",
+      "veta-delivery",
+      "veta-principles",
+      "veta-pilot",
+      "veta-institutional",
+      "veta-status"
+    ]
+  },
+  {
+    "id": "veta-purpose",
+    "title": "VETA purpose",
+    "keys": [
+      "veta purpose",
+      "purpose of veta",
+      "why veta",
+      "veta scope",
+      "scope of veta"
+    ],
+    "answer": "**VETA's proposed purpose** is to make practical learning more accessible through virtual environments that connect instruction with experience. Its scope includes education, technical and vocational skills, engineering, industry, public safety and other fields where structured practice can improve understanding and readiness."
+  },
+  {
+    "id": "veta-mission",
+    "title": "VETA mission",
+    "keys": [
+      "veta mission",
+      "mission of veta",
+      "veta aim",
+      "veta aims"
+    ],
+    "answer": "**VETA's mission:** create useful, affordable and reliable virtual learning experiences, and work with educators and subject specialists to connect those experiences to measurable learning outcomes."
+  },
+  {
+    "id": "veta-vision",
+    "title": "VETA vision",
+    "keys": [
+      "veta vision",
+      "vision of veta"
+    ],
+    "answer": "**VETA's vision:** a society in which people can develop practical capability through accessible virtual experience, supported by instruction and real-world practice."
+  },
+  {
+    "id": "veta-approach",
+    "title": "VETA core approach",
+    "keys": [
+      "veta approach",
+      "veta core approach",
+      "approach of veta",
+      "veta learning model",
+      "how does veta teach"
+    ],
+    "answer": "**VETA's core approach:** the learner is an active participant. Each experience provides an objective, an environment to act within, consequences that respond to actions and feedback for improvement. Learners repeat tasks and progress from guided practice to independent performance.\n\n3D graphics, animation, physics and software interaction are tools for building these experiences. VETA's central product is the opportunity to practise and learn within a responsive environment."
+  },
+  {
+    "id": "veta-programs",
+    "title": "VETA program areas",
+    "keys": [
+      "veta programs",
+      "veta program areas",
+      "veta training areas",
+      "veta fields",
+      "veta technical education",
+      "veta workforce training",
+      "veta public safety",
+      "veta education"
+    ],
+    "answer": "**Proposed VETA program areas:**\n- **Technical education:** interactive laboratories for electronics, microcontrollers, microprocessors, programming and engineering fundamentals.\n- **Workforce training:** simulated equipment operation, maintenance, troubleshooting and workplace procedures.\n- **Public safety:** guided scenarios for emergency preparedness, evacuation and response coordination.\n- **Education and exploration:** interactive environments for physical systems, scientific concepts and practical processes."
+  },
+  {
+    "id": "veta-structure",
+    "title": "VETA proposed structure",
+    "keys": [
+      "veta structure",
+      "structure of veta",
+      "veta organization",
+      "veta organisation",
+      "veta director",
+      "veta leadership",
+      "who leads veta",
+      "who runs veta",
+      "veta team"
+    ],
+    "answer": "**VETA's proposed structure:** a director would coordinate direction, program priorities, partnerships and resources. No individual is named in this framework.\n- **Learning and training:** defines objectives, prepares instruction and develops exercises with educators.\n- **Technology and simulation:** develops interactive environments, system behavior, controls and performance.\n- **Validation and assessment:** reviews technical accuracy, usability and evidence of learning.\n- **Partnerships and operations:** coordinates pilot delivery, budgets, documentation and institutional relationships.\n\nA small initial team may combine these functions. Subject specialists should review training content within their expertise."
+  },
+  {
+    "id": "veta-delivery",
+    "title": "VETA program delivery",
+    "keys": [
+      "how a veta program works",
+      "how does veta work",
+      "veta delivery",
+      "veta program works",
+      "veta process",
+      "veta assessment",
+      "veta evaluation"
+    ],
+    "answer": "**How a proposed VETA program works:** begin with a specific skill and intended learner group. Define the task, build a simulation, provide guided practice and evaluate performance through an independent exercise. Feedback explains what happened and supports another attempt.\n\nWhere relevant, supervised real-world practice checks whether learning transfers beyond the simulation."
+  },
+  {
+    "id": "veta-principles",
+    "title": "VETA development principles",
+    "keys": [
+      "veta principles",
+      "veta development principles",
+      "veta accessibility",
+      "veta performance",
+      "veta accuracy",
+      "veta measurement",
+      "veta learning value"
+    ],
+    "answer": "**VETA's development principles:**\n- **Learning value:** build interactions around clear tasks and useful feedback.\n- **Accessibility:** support affordable devices and understandable controls; require immersive hardware only when it benefits the task.\n- **Performance:** prioritize reliable behavior and responsive interaction before visual complexity.\n- **Accuracy:** review simulated behavior and instruction with qualified specialists.\n- **Measurement:** distinguish participation, task completion and demonstrated competence."
+  },
+  {
+    "id": "veta-pilot",
+    "title": "VETA initial demonstration",
+    "keys": [
+      "veta pilot",
+      "veta demo",
+      "veta demonstration",
+      "veta initial demonstration",
+      "veta first module",
+      "veta microcontroller",
+      "veta laboratory",
+      "veta lab"
+    ],
+    "answer": "**VETA's proposed first module** is a virtual microcontroller laboratory. Learners would configure simple inputs/outputs, run a program, inspect behavior and troubleshoot a controlled fault.\n\nDeliverables would include a working exercise, instructor guidance and a performance report. The pilot would be reviewed for technical accuracy and tested with a small learning group before expansion. This is a proposal, not a claim that a pilot has already been delivered."
+  },
+  {
+    "id": "veta-institutional",
+    "title": "VETA partnerships and institutional development",
+    "keys": [
+      "veta partners",
+      "veta partnerships",
+      "veta funding",
+      "veta support",
+      "veta institutional development",
+      "veta budget"
+    ],
+    "answer": "**VETA would seek educational and industry partners** for content review, pilot sites and development support. Funding proposals would specify deliverables, costs, responsibilities and evaluation criteria. The founding framework does not name confirmed partners, committed funding or a budget."
+  },
+  {
+    "id": "veta-status",
+    "title": "VETA proposal status",
+    "keys": [
+      "veta status",
+      "veta government",
+      "veta authority",
+      "is veta official",
+      "is veta a government agency",
+      "veta accreditation",
+      "veta mandate",
+      "veta founding proposal",
+      "veta proposal",
+      "veta established"
+    ],
+    "answer": "**VETA is a proposed initiative**, described in a founding-proposal discussion draft dated **16 October 2026**. Its organizational form, any accreditation and any public mandate would be established separately. The framework **does not confer government status** or establish an existing government authority."
+  }
+];
+
   function createVia(overrides = {}) {
     return createBot({
       name: "Via",
       // Beyond AI first, then the rest of the original queries.js knowledge (Q-Pod / e-cash, slots), then everyday chat.
-      knowledge: [...BEYOND_AI_KNOWLEDGE, ...QPOD_KNOWLEDGE, ...SLOTS_KNOWLEDGE, ...EVERYDAY],
+      knowledge: [...BEYOND_AI_KNOWLEDGE, ...ASTRIX_NOVA_KNOWLEDGE, ...VETA_KNOWLEDGE, ...QPOD_KNOWLEDGE, ...SLOTS_KNOWLEDGE, ...EVERYDAY],
       responses: VIA_SMALL_TALK,
       smallTalkWithKnowledge: true,
       reflections: REFLECTIONS,
@@ -9840,7 +12599,7 @@ Please get in touch.
       defaultActions: MAIN_ACTIONS,
       moodLines: VIA_MOOD_LINES,
       moodPrompts: VIA_MOOD_PROMPTS,
-      hub: { name: "Manila", timeZone: "Asia/Manila" },
+      hub: { name: "Clark, Philippines", timeZone: "Asia/Manila" },
       business: {
         serviceIds: Object.keys(NEED_LABELS),
         needLabels: NEED_LABELS,
@@ -9988,10 +12747,6 @@ Please get in touch.
         if (opts.siteUrl) window.open(opts.siteUrl.replace(/\/$/, "") + "/" + href, "_blank", "noopener");
         return;
       }
-      if (/^\/(?!\/)/.test(href)) {
-        window.location.href = href;
-        return;
-      }
       window.open(href, /^(tel|mailto):/.test(href) ? "_self" : "_blank", "noopener");
     }
     function welcome() {
@@ -10054,6 +12809,11 @@ Please get in touch.
     function updateSendState() {
       sendBtn.disabled = busy || !input.value.trim();
     }
+    // Send directly on click/tap: embedded hosts may block native form submission.
+    sendBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      send();
+    });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       send();
@@ -10094,7 +12854,7 @@ Please get in touch.
   function escapeHtml(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
-  var SAFE_HREF = /^(https?:\/\/|mailto:|tel:|#|\/(?!\/))/i;
+  var SAFE_HREF = /^(https?:\/\/|mailto:|tel:|#)/i;
   function inline(text) {
     return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/(^|\W)\*([^*\n]+)\*(?=\W|$)/g, "$1<em>$2</em>").replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) => {
       const url = href.replace(/&amp;/g, "&");
@@ -10138,7 +12898,7 @@ Please get in touch.
   <div class="lz-messages" aria-live="polite"></div>
   <form class="lz-composer">
     <textarea rows="1" placeholder="Type your message…" aria-label="Message"></textarea>
-    <button class="lz-send" type="submit" aria-label="Send message" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    <button class="lz-send" type="button" aria-label="Send message" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
   </form>
 </section>`;
   // Styles ship in css/via.css; the site CSP (style-src 'self') blocks injected <style> tags.
@@ -10150,7 +12910,7 @@ Please get in touch.
     var _a, _b, _c;
     const config = window.VIA_CONFIG || {};
     let instance = null;
-    const getBot = () => instance || (instance = createVia());
+    const getBot = () => instance || (instance = createVia({ memory: config.memory !== false, memoryKey: config.memoryKey }));
     const bot = { name: "Via", reply: (text) => getBot().reply(text), revive: () => getBot().revive(), reset: () => getBot().reset() };
     window.via = mountWidget({
       bot,
@@ -10173,4 +12933,3 @@ Please get in touch.
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();
 })();
-

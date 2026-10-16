@@ -10,16 +10,24 @@ const isDev = process.env.NODE_ENV !== 'production';
 // The chat widget is a prebuilt script served from /public. A content hash in its URL lets it be cached immutably.
 const viaVersion = createHash('sha256').update(readFileSync('./public/js/via.js')).digest('hex').slice(0, 10);
 
+// The contact form posts from the browser to the BeyondAi Admin enquiry API and uses Cloudflare Turnstile.
+const TURNSTILE = 'https://challenges.cloudflare.com';
+const enquiryApiOrigin = (() => {
+  try { return new URL(process.env.NEXT_PUBLIC_ENQUIRY_API_URL ?? '').origin; } catch { return ''; }
+})();
+
 // Next.js inlines small bootstrap scripts (the RSC payload) into statically generated HTML, so script-src needs
 // 'unsafe-inline' unless every page is rendered per request with a nonce. All content is static and escaped by React,
-// so static pages served from the CDN are the better trade-off here. Everything else stays locked to 'self'.
+// so static pages served from the CDN are the better trade-off here. Everything else stays locked to 'self', plus
+// the enquiry API and Turnstile for the contact form.
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} ${TURNSTILE}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
-  "connect-src 'self'",
+  `connect-src 'self'${enquiryApiOrigin ? ` ${enquiryApiOrigin}` : ''}`,
+  `frame-src ${TURNSTILE}`,
   "form-action 'self'",
   "frame-ancestors 'self'",
   "base-uri 'self'",
