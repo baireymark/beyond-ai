@@ -11,10 +11,10 @@ export interface Person {
 export const leaders: Person[] = [
   { name: 'Ronald Vergara', role: 'President', photo: '/img/people/ronald-vergara.webp',
     bio: 'Entrepreneur, technology strategist and veteran advocate who has built and scaled companies across real estate, logistics, healthcare, finance and artificial intelligence. Ronald is co-founder and Chief Marketing Officer of VALRPro, and founder of Beyond-AI.io, where he leads work on AI automation, agentic systems and enterprise web solutions.' },
-  { name: 'MD Naimul Hasan Durjay', role: 'Deputy Director', photo: '/img/people/naimul-hasan-durjay.webp',
-    bio: 'As second-in-command, Durjay oversees IT operations, product execution and sales strategy, turning AI-driven ideas into scalable products that meet market demand.' },
   { name: 'Christopher French', role: 'Co-Founder, VALRPro', photo: '/img/people/christopher-french.webp',
-    bio: 'Former serviceman and veteran advocate who helps veterans navigate the VA disability claims process through VALRPro.' }
+    bio: 'Former serviceman and veteran advocate who helps veterans navigate the VA disability claims process through VALRPro.' },
+  { name: 'MD Naimul Hasan Durjay', role: 'Deputy Director', photo: '/img/people/naimul-hasan-durjay.webp',
+    bio: 'As second-in-command, Durjay oversees IT operations, product execution and sales strategy, turning AI-driven ideas into scalable products that meet market demand.' }
 ];
 export const board: Person[] = [
   { name: 'Muhammad Monir Hossain', role: 'Board of Directors · Founder & Chairman, Betopia Group', photo: '/img/people/monir-hossain.webp',
