@@ -13887,7 +13887,7 @@ You can add or correct anything that doesn't fit.`
         "leadership team",
       ],
       answer:
-        "Beyond AI's leadership includes **Ronald Vergara, President & CEO**, **MD Naimul Hasan Durjay, Senior Vice President Operations**, and **Christopher Wayne French**, Founder and Chairman of the Board.\n\nBoard member: **Abdulgani Macatoman**.",
+        "Beyond AI's leadership includes **Ronald Vergara, President & CEO**, and **MD Naimul Hasan Durjay, Senior Vice President Operations**.\n\nBoard: **Christopher Wayne French**, Founder and Chairman of the Board, and **Abdulgani Macatoman**.",
       actions: [PAGE("Board of directors", "/board-of-directors")],
     },
     {
@@ -13953,7 +13953,7 @@ You can add or correct anything that doesn't fit.`
       title: "Christopher Wayne French",
       keys: ["christopher wayne french", "chris french", "christopher"],
       answer:
-        "**Christopher Wayne French — Executive team.** Founder and Chairman of the Board, former serviceman and veteran advocate.",
+        "**Christopher Wayne French — Founder and Chairman of the Board.** Former serviceman and veteran advocate.",
       actions: [
         {
           label: "Leadership & board",

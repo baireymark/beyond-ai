@@ -16,12 +16,6 @@ export const leaders: Person[] = [
     bio: "Entrepreneur, technology strategist and veteran advocate who has built and scaled companies across real estate, logistics, healthcare, finance and artificial intelligence. Ronald is co-founder and Chief Marketing Officer of VALRPro, and founder of Beyond-AI.io, where he leads work on AI automation, agentic systems and enterprise web solutions.",
   },
   {
-    name: "Christopher Wayne French",
-    role: "Founder and Chairman of the Board",
-    photo: "/img/people/christopher-french.webp",
-    bio: "Former serviceman and veteran advocate who helps veterans navigate the VA disability claims process through VALRPro.",
-  },
-  {
     name: "MD Naimul Hasan Durjay",
     role: "Senior Vice President Operations",
     photo: "/img/people/naimul-hasan-durjay.webp",
@@ -29,6 +23,12 @@ export const leaders: Person[] = [
   },
 ];
 export const board: Person[] = [
+  {
+    name: "Christopher Wayne French",
+    role: "Founder and Chairman of the Board",
+    photo: "/img/people/christopher-french.webp",
+    bio: "Former serviceman and veteran advocate who helps veterans navigate the VA disability claims process through VALRPro.",
+  },
   {
     name: "Abdulgani Macatoman",
     role: "Board of Directors",
