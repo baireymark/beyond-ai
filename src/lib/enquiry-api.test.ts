@@ -12,7 +12,7 @@ const payload = buildLeadPayload(
   { turnstileToken: 'tok-1', consentVersion: '2026-10', pathname: '/contact', search: '' },
 );
 const ENDPOINT = 'https://admin.example/api/leads';
-const EMAIL = 'sakib@beyondai.ph';
+const EMAIL = 'info@beyondai.ph';
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });

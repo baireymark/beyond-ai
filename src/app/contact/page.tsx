@@ -16,7 +16,7 @@ const trail = [{ href: '/', label: 'Home' }, { href: '/contact', label: 'Contact
 const jsonLd = [breadcrumbLd(trail), {
   '@context': 'https://schema.org', '@type': 'ContactPage', name: 'Contact BeyondAi', url: site.url + '/contact',
   mainEntity: {
-    '@type': 'Organization', name: site.brand, email: site.email, telephone: site.phone.display,
+    '@type': 'Organization', name: site.brand, email: site.email, telephone: site.phones.map(p => p.display),
     address: { '@type': 'PostalAddress', addressLocality: site.location.locality, addressCountry: site.location.country },
   },
 }];
@@ -41,7 +41,7 @@ export default function ContactPage() {
         <aside className="contact-aside" aria-label="Contact details">
           <div className="card">
             <h2 className="p-mono">Email</h2><p><a href={`mailto:${site.email}`}>{site.email}</a></p>
-            <h2 className="p-mono">Phone</h2><p><a href={`tel:${site.phone.href}`}>{site.phone.display}</a></p>
+            <h2 className="p-mono">Phone</h2><p>{site.phones.map((p, i) => <span key={p.href}>{i > 0 && <br />}<a href={`tel:${p.href}`}>{p.display}</a></span>)}</p>
             <h2 className="p-mono">Location</h2><p>{site.location.primary}<br /><span className="muted">Serving {site.location.market}, the wider Philippines and international clients</span></p>
             <h2 className="p-mono">Local time</h2><ManilaClock variant="card" />
             <h2 className="p-mono">Follow</h2>

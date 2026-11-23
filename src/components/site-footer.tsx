@@ -24,7 +24,7 @@ export function SiteFooter() {
           <address>
             <span>{site.location.primary}</span>
             <a href={`mailto:${site.email}`}>{site.email}</a>
-            <a href={`tel:${site.phone.href}`}>{site.phone.display}</a>
+            {site.phones.map(p => <a key={p.href} href={`tel:${p.href}`}>{p.display}</a>)}
           </address>
         </div>
         <div className="foot-nav">

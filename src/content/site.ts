@@ -12,8 +12,11 @@ export const site = {
     country: 'PH',
     market: 'Metro Manila', // service-area reference only; not an office
   },
-  email: 'sakib@beyondai.ph', // published on beyondai.ph
-  phone: { display: '+44 7512 549837', href: '+447512549837' }, // published on beyondai.ph (UK number)
+  email: 'info@beyondai.ph',
+  phones: [
+    { display: '+63 976 081 8698', href: '+639760818698' }, // Philippines
+    { display: '+1 312 877 3570', href: '+13128773570' }, // United States
+  ],
   social: [
     { name: 'LinkedIn', href: 'https://www.linkedin.com/company/beyond_ai.manila/' },
     { name: 'Facebook', href: 'https://www.facebook.com/share/1DHSg7tWwR/' },

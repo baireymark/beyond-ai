@@ -13691,18 +13691,20 @@ You can add or correct anything that doesn't fit.`
   var SITE = "https://beyondai.ph";
   var BEYOND_AI = {
     name: "Beyond AI",
-    email: "sakib@beyondai.ph",
-    // Published contact number on the new BeyondAi website.
-    phone: "+44 7512 549837",
-    phoneHref: "tel:+447512549837",
+    email: "info@beyondai.ph",
+    // Published contact numbers on the new BeyondAi website.
+    phones: [
+      { display: "+63 976 081 8698", href: "tel:+639760818698" },
+      { display: "+1 312 877 3570", href: "tel:+13128773570" },
+    ],
     contactPage: `${SITE}/contact`,
     linkedin: "https://www.linkedin.com/company/beyond_ai.manila/",
     facebook: "https://www.facebook.com/share/1DHSg7tWwR/",
   };
   var MAIL = `[${BEYOND_AI.email}](mailto:${BEYOND_AI.email})`;
   var CONTACT = `[contact page](${BEYOND_AI.contactPage})`;
-  var CALL = BEYOND_AI.phone
-    ? ` or call [${BEYOND_AI.phone}](${BEYOND_AI.phoneHref})`
+  var CALL = BEYOND_AI.phones.length
+    ? ` or call ${BEYOND_AI.phones.map((p) => `[${p.display}](${p.href})`).join(" / ")}`
     : "";
   var REACH = `email ${MAIL}${CALL}, or use the ${CONTACT} (the team aims to reply within 24 hours)`;
   var CONTACT_US = { label: "Contact Beyond AI", href: BEYOND_AI.contactPage };
@@ -14407,7 +14409,7 @@ You can add or correct anything that doesn't fit.`
         "course duration",
       ],
       answer:
-        "Ask Beyond AI about the next AI Education intake, fees, course format and full syllabus through the contact page or sakib@beyondai.ph.",
+        "Ask Beyond AI about the next AI Education intake, fees, course format and full syllabus through the contact page or info@beyondai.ph.",
       actions: [CONTACT_US],
     },
     {
@@ -14437,7 +14439,7 @@ You can add or correct anything that doesn't fit.`
         "upskilling",
       ],
       answer:
-        "Beyond AI offers team AI training. Tell the team your group size, goals and preferred schedule through the contact page or sakib@beyondai.ph.",
+        "Beyond AI offers team AI training. Tell the team your group size, goals and preferred schedule through the contact page or info@beyondai.ph.",
       actions: [CONTACT_US],
     },
     // ---------- working with Beyond AI ----------
@@ -14562,7 +14564,7 @@ You can add or correct anything that doesn't fit.`
         "your product is not working",
       ],
       answer:
-        "For technical support, contact Beyond AI through its contact page or sakib@beyondai.ph. Confirm the support coverage and response terms for your service or product.",
+        "For technical support, contact Beyond AI through its contact page or info@beyondai.ph. Confirm the support coverage and response terms for your service or product.",
       actions: [CONTACT_US],
     },
     // ---------- AI and tech, in plain language (always tied back to how Beyond AI helps) ----------
