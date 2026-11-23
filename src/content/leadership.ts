@@ -30,18 +30,6 @@ export const leaders: Person[] = [
 ];
 export const board: Person[] = [
   {
-    name: "Muhammad Monir Hossain",
-    role: "Board of Directors · Founder & Chairman, Betopia Group",
-    photo: "/img/people/monir-hossain.webp",
-    bio: "Entrepreneur and business leader who, as Founder and Chairman of Betopia Group, leads strategic expansion and long-term value creation across a portfolio of technology-driven ventures.",
-  },
-  {
-    name: "Stacey Michelon",
-    role: "Board of Directors · Founder, Veterans Advocate Center; Co-Founder, VALRPro",
-    photo: "/img/people/stacey-michelon.webp",
-    bio: "Veteran advocate and entrepreneur helping U.S. veterans access the benefits they earned, combining education, technology and outreach. Host of the “You Served, You Deserve” podcast.",
-  },
-  {
     name: "Abdulgani Macatoman",
     role: "Board of Directors",
     photo: "/img/people/abdulgani-macatoman.webp",

@@ -13887,7 +13887,7 @@ You can add or correct anything that doesn't fit.`
         "leadership team",
       ],
       answer:
-        "Beyond AI's leadership includes **Ronald Vergara, President & CEO**, **MD Naimul Hasan Durjay, Senior Vice President Operations**, and **Christopher Wayne French**, Founder and Chairman of the Board.\n\nBoard members: **Muhammad Monir Hossain**, **Stacey Michelon** and **Abdulgani Macatoman**.",
+        "Beyond AI's leadership includes **Ronald Vergara, President & CEO**, **MD Naimul Hasan Durjay, Senior Vice President Operations**, and **Christopher Wayne French**, Founder and Chairman of the Board.\n\nBoard member: **Abdulgani Macatoman**.",
       actions: [PAGE("Board of directors", "/board-of-directors")],
     },
     {
@@ -13941,38 +13941,6 @@ You can add or correct anything that doesn't fit.`
       ],
       answer:
         "**MD Naimul Hasan Durjay — Senior Vice President Operations.** Oversees IT operations, product execution and sales strategy.",
-      actions: [
-        {
-          label: "Leadership & board",
-          href: "https://beyondai.ph/board-of-directors",
-        },
-      ],
-    },
-    {
-      id: "monir-hossain",
-      title: "Muhammad Monir Hossain",
-      keys: [
-        "muhammad monir hossain",
-        "mohammad monir hossain",
-        "monir",
-        "hossain",
-        "betopia",
-      ],
-      answer:
-        "**Muhammad Monir Hossain — Board member.** Founder and Chairman of Betopia Group.",
-      actions: [
-        {
-          label: "Leadership & board",
-          href: "https://beyondai.ph/board-of-directors",
-        },
-      ],
-    },
-    {
-      id: "stacey-michelon",
-      title: "Stacey Michelon",
-      keys: ["stacey michelon", "stacey", "michelon"],
-      answer:
-        "**Stacey Michelon — Board member.** Founder of Veterans Advocate Center and co-founder of VALRPro; hosts the “You Served, You Deserve” podcast.",
       actions: [
         {
           label: "Leadership & board",
