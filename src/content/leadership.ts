@@ -30,6 +30,12 @@ export const board: Person[] = [
     bio: "Former serviceman and veteran advocate who helps veterans navigate the VA disability claims process through VALRPro.",
   },
   {
+    name: "Muhammad Monir Hossain",
+    role: "Board of Directors · Founder & Chairman, Betopia Group",
+    photo: "/img/people/monir-hossain.webp",
+    bio: "Entrepreneur and business leader who, as Founder and Chairman of Betopia Group, leads strategic expansion and long-term value creation across a portfolio of technology-driven ventures.",
+  },
+  {
     name: "Abdulgani Macatoman",
     role: "Board of Directors",
     photo: "/img/people/abdulgani-macatoman.webp",
